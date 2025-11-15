@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+supabase
+SQLAlchemy==2.0.36
