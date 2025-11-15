@@ -153,9 +153,7 @@ function App() {
             onSubmit={showMotherForm ? handleMotherSubmit : handleAnswerSubmit}
           >
             <div className="card-header">
-              <span className="chip">
-                {showMotherForm ? "Tell us about you" : "Postpartum Intake"}
-              </span>
+              <span className="chip">{showMotherForm ? "About you" : "Majka Intake"}</span>
             </div>
             <div className="card-body">
               {showMotherForm ? (
@@ -278,7 +276,7 @@ function App() {
         ) : (
           <div className="uiverse-card">
             <div className="card-body">
-              <h2 className="question-text">Thank you, mama 💗</h2>
+              <h2 className="question-text">Thank you from Majka 💗</h2>
               <p className="thankyou-text">
                 Your profile and answers are saved. We&apos;ll tailor the next
                 steps for you.
