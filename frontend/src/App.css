@@ -79,6 +79,31 @@ body {
   gap: 12px;
 }
 
+.auth-toggle {
+  display: inline-flex;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 4px;
+  margin-bottom: 8px;
+  gap: 4px;
+}
+
+.auth-toggle button {
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: #9b2c6b;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.auth-toggle button.active {
+  background: linear-gradient(135deg, #ff4a9b, #ff79c8);
+  color: white;
+}
+
 .field {
   display: flex;
   flex-direction: column;

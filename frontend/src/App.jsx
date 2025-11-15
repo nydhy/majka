@@ -8,14 +8,17 @@ function App() {
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(true);
   const [fetchError, setFetchError] = useState("");
 
-  const [motherForm, setMotherForm] = useState({
+  const [authMode, setAuthMode] = useState("signup"); // signup | login
+  const [signupForm, setSignupForm] = useState({
     name: "",
+    password: "",
     age: "",
     country: "",
     deliveredAt: "",
   });
+  const [loginForm, setLoginForm] = useState({ name: "", password: "" });
   const [motherId, setMotherId] = useState(null);
-  const [step, setStep] = useState("mother");
+  const [step, setStep] = useState("auth"); // auth | questions | done
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState("");
@@ -45,31 +48,41 @@ function App() {
   const currentQuestion = questions[currentIndex];
   const hasOptions = currentQuestion?.options?.length > 0;
 
-  const motherFormValid = useMemo(() => {
+  const signupValid = useMemo(() => {
     return (
-      motherForm.name.trim() &&
-      motherForm.age.trim() &&
-      motherForm.country.trim() &&
-      motherForm.deliveredAt
+      signupForm.name.trim() &&
+      signupForm.password.trim() &&
+      signupForm.age.trim() &&
+      signupForm.country.trim() &&
+      signupForm.deliveredAt
     );
-  }, [motherForm]);
+  }, [signupForm]);
 
-  const handleMotherChange = (field, value) => {
-    setMotherForm((prev) => ({ ...prev, [field]: value }));
+  const loginValid = useMemo(() => {
+    return loginForm.name.trim() && loginForm.password.trim();
+  }, [loginForm]);
+
+  const handleSignupChange = (field, value) => {
+    setSignupForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleMotherSubmit = async (event) => {
+  const handleLoginChange = (field, value) => {
+    setLoginForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSignupSubmit = async (event) => {
     event.preventDefault();
-    if (!motherFormValid) return;
+    if (!signupValid) return;
 
     setIsSubmitting(true);
     try {
       const payload = {
-        name: motherForm.name.trim(),
-        age: motherForm.age ? Number(motherForm.age) : null,
-        country: motherForm.country.trim(),
-        delivered_at: motherForm.deliveredAt
-          ? new Date(motherForm.deliveredAt).toISOString()
+        name: signupForm.name.trim(),
+        password: signupForm.password,
+        age: signupForm.age ? Number(signupForm.age) : null,
+        country: signupForm.country.trim(),
+        delivered_at: signupForm.deliveredAt
+          ? new Date(signupForm.deliveredAt).toISOString()
           : null,
       };
 
@@ -80,7 +93,7 @@ function App() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.detail || "Unable to save your profile");
+        throw new Error(data?.detail || "Unable to create your Majka profile");
       }
 
       setMotherId(data.mother_id);
@@ -88,6 +101,35 @@ function App() {
     } catch (err) {
       console.error(err);
       alert(err.message || "Unable to start intake");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLoginSubmit = async (event) => {
+    event.preventDefault();
+    if (!loginValid) return;
+
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: loginForm.name.trim(),
+          password: loginForm.password,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || "Invalid name or password");
+      }
+
+      setMotherId(data.mother_id);
+      setStep("questions");
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Unable to sign in");
     } finally {
       setIsSubmitting(false);
     }
@@ -131,88 +173,176 @@ function App() {
     }
   };
 
-  const showMotherForm = step === "mother";
+  const showAuthForm = step === "auth";
   const isFinished = step === "done";
 
-  const submitDisabled = showMotherForm
-    ? !motherFormValid || isSubmitting
-    : isSubmitting || !currentQuestion || (!hasOptions && !textAnswer.trim()) || (hasOptions && !selectedOption);
+  const submitDisabled = showAuthForm
+    ? authMode === "signup"
+      ? !signupValid || isSubmitting
+      : !loginValid || isSubmitting
+    : isSubmitting ||
+      !currentQuestion ||
+      (!hasOptions && !textAnswer.trim()) ||
+      (hasOptions && !selectedOption);
 
-  const buttonLabel = showMotherForm
-    ? "Start Intake"
+  const buttonLabel = showAuthForm
+    ? authMode === "signup"
+      ? "Create account"
+      : "Sign in"
     : currentIndex === questions.length - 1
       ? "Finish"
       : "Next";
+
+  const progressLabel = showAuthForm
+    ? authMode === "signup"
+      ? "Step 1 of 2 · Create your Majka profile"
+      : "Step 1 of 2 · Sign in to Majka"
+    : `Question ${currentIndex + 1} of ${questions.length}`;
+
+  const onSubmit =
+    step === "auth"
+      ? authMode === "signup"
+        ? handleSignupSubmit
+        : handleLoginSubmit
+      : handleAnswerSubmit;
 
   return (
     <div className="app-container">
       <div className="card-wrapper">
         {!isFinished ? (
-          <form
-            className="uiverse-card"
-            onSubmit={showMotherForm ? handleMotherSubmit : handleAnswerSubmit}
-          >
+          <form className="uiverse-card" onSubmit={onSubmit}>
             <div className="card-header">
-              <span className="chip">{showMotherForm ? "About you" : "Majka Intake"}</span>
+              <span className="chip">
+                {showAuthForm
+                  ? authMode === "signup"
+                    ? "Join Majka"
+                    : "Welcome back"
+                  : "Majka Intake"}
+              </span>
             </div>
             <div className="card-body">
-              {showMotherForm ? (
+              {showAuthForm ? (
                 <>
-                  <h2 className="question-text">Let&apos;s get to know you</h2>
-                  <div className="form-grid">
-                    <label className="field">
-                      <span>Name</span>
-                      <input
-                        className="text-input"
-                        type="text"
-                        value={motherForm.name}
-                        placeholder="Your name"
-                        onChange={(e) =>
-                          handleMotherChange("name", e.target.value)
-                        }
-                        required
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Age</span>
-                      <input
-                        className="text-input"
-                        type="number"
-                        min="13"
-                        value={motherForm.age}
-                        placeholder="e.g. 32"
-                        onChange={(e) =>
-                          handleMotherChange("age", e.target.value)
-                        }
-                        required
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Country</span>
-                      <input
-                        className="text-input"
-                        type="text"
-                        value={motherForm.country}
-                        placeholder="Where are you?"
-                        onChange={(e) =>
-                          handleMotherChange("country", e.target.value)
-                        }
-                        required
-                      />
-                    </label>
-                    <label className="field">
-                      <span>When did you give birth?</span>
-                      <input
-                        className="text-input"
-                        type="date"
-                        value={motherForm.deliveredAt}
-                        onChange={(e) =>
-                          handleMotherChange("deliveredAt", e.target.value)
-                        }
-                        required
-                      />
-                    </label>
+                  <div className="auth-toggle">
+                    <button
+                      type="button"
+                      className={authMode === "signup" ? "active" : ""}
+                      onClick={() => setAuthMode("signup")}
+                    >
+                      Create account
+                    </button>
+                    <button
+                      type="button"
+                      className={authMode === "login" ? "active" : ""}
+                      onClick={() => setAuthMode("login")}
+                    >
+                      Sign in
+                    </button>
                   </div>
+                  {authMode === "signup" ? (
+                    <>
+                      <h2 className="question-text">Hi! New Mama!</h2>
+                      <div className="form-grid">
+                        <label className="field">
+                          <span>Name</span>
+                          <input
+                            className="text-input"
+                            type="text"
+                            value={signupForm.name}
+                            placeholder="Your name"
+                            onChange={(e) =>
+                              handleSignupChange("name", e.target.value)
+                            }
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Password</span>
+                          <input
+                            className="text-input"
+                            type="password"
+                            value={signupForm.password}
+                            placeholder="Create a password"
+                            onChange={(e) =>
+                              handleSignupChange("password", e.target.value)
+                            }
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Age</span>
+                          <input
+                            className="text-input"
+                            type="number"
+                            min="13"
+                            value={signupForm.age}
+                            placeholder="e.g. 32"
+                            onChange={(e) =>
+                              handleSignupChange("age", e.target.value)
+                            }
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Country</span>
+                          <input
+                            className="text-input"
+                            type="text"
+                            value={signupForm.country}
+                            placeholder="Where are you?"
+                            onChange={(e) =>
+                              handleSignupChange("country", e.target.value)
+                            }
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span>When did you give birth?</span>
+                          <input
+                            className="text-input"
+                            type="date"
+                            value={signupForm.deliveredAt}
+                            onChange={(e) =>
+                              handleSignupChange("deliveredAt", e.target.value)
+                            }
+                            required
+                          />
+                        </label>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="question-text">Sign in Mama!</h2>
+                      <div className="form-grid">
+                        <label className="field">
+                          <span>Name</span>
+                          <input
+                            className="text-input"
+                            type="text"
+                            value={loginForm.name}
+                            placeholder="Registered name"
+                            onChange={(e) =>
+                              handleLoginChange("name", e.target.value)
+                            }
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Password</span>
+                          <input
+                            className="text-input"
+                            type="password"
+                            value={loginForm.password}
+                            placeholder="Password"
+                            onChange={(e) =>
+                              handleLoginChange("password", e.target.value)
+                            }
+                            required
+                          />
+                        </label>
+                      </div>
+                    </>
+                  )}
                 </>
               ) : (
                 <>
@@ -263,11 +393,7 @@ function App() {
               )}
             </div>
             <div className="card-footer">
-              <div className="progress">
-                {showMotherForm
-                  ? "Step 1 of 2"
-                  : `Question ${currentIndex + 1} of ${questions.length}`}
-              </div>
+              <div className="progress">{progressLabel}</div>
               <button type="submit" className="submit-btn" disabled={submitDisabled}>
                 {buttonLabel}
               </button>

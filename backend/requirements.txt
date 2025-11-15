@@ -2,4 +2,5 @@ fastapi
 uvicorn[standard]
 python-dotenv
 supabase
+bcrypt
 SQLAlchemy==2.0.36

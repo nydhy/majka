@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 
+import bcrypt
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,9 +11,15 @@ from supabase import Client, create_client
 
 class MotherPayload(BaseModel):
     name: str
+    password: str
     age: int | None = None
     country: str | None = None
     delivered_at: datetime | None = None
+
+
+class LoginPayload(BaseModel):
+    name: str
+    password: str
 
 
 class AnswerPayload(BaseModel):
@@ -56,11 +63,41 @@ def _resp_data(resp):
     return getattr(resp, "data", None)
 
 
+def _hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(password: str, hashed: str | None) -> bool:
+    if not hashed:
+        return False
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
+        return False
+
+
 @app.post("/api/mothers")
 def create_mother(payload: MotherPayload):
     try:
+        existing_resp = (
+            supabase.table(SUPABASE_MOTHERS_TABLE)
+            .select("id")
+            .eq("name", payload.name)
+            .limit(1)
+            .execute()
+        )
+        if _resp_error(existing_resp):
+            raise HTTPException(
+                status_code=500, detail=str(_resp_error(existing_resp))
+            )
+        if _resp_data(existing_resp):
+            raise HTTPException(
+                status_code=409, detail="A profile with this name already exists"
+            )
+
         record = {
             "name": payload.name,
+            "password_hash": _hash_password(payload.password),
             "age": payload.age,
             "country": payload.country,
             "delivered_at": payload.delivered_at.isoformat()
@@ -82,6 +119,38 @@ def create_mother(payload: MotherPayload):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/auth/login")
+def login(payload: LoginPayload):
+    resp = (
+        supabase.table(SUPABASE_MOTHERS_TABLE)
+        .select("id,password_hash,name,age,country,delivered_at")
+        .eq("name", payload.name)
+        .limit(1)
+        .execute()
+    )
+    error = _resp_error(resp)
+    if error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+    mother = (_resp_data(resp) or [])
+    if not mother:
+        raise HTTPException(status_code=401, detail="Invalid name or password")
+
+    record = mother[0]
+    if not _verify_password(payload.password, record.get("password_hash")):
+        raise HTTPException(status_code=401, detail="Invalid name or password")
+
+    return {
+        "mother_id": record["id"],
+        "profile": {
+            "name": record.get("name"),
+            "age": record.get("age"),
+            "country": record.get("country"),
+            "delivered_at": record.get("delivered_at"),
+        },
+    }
 
 
 @app.get("/api/questions")
