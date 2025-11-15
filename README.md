@@ -1,3 +1,3 @@
 # Majka
 
-An app for beautiful mothers recovering from post-partum.
+An AI-driven app for beautiful mothers recovering from post-partum.
