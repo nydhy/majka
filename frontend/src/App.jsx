@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -19,11 +19,15 @@ function App() {
   const [loginForm, setLoginForm] = useState({ name: "", password: "" });
   const [motherId, setMotherId] = useState(null);
   const [step, setStep] = useState("auth"); // auth | questions | done
+  const [resumeQuestionId, setResumeQuestionId] = useState(null);
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState("");
   const [textAnswer, setTextAnswer] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const answeredCacheRef = useRef(new Map());
+  const prefillingRef = useRef(false);
+  const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
     const loadQuestions = async () => {
@@ -44,6 +48,21 @@ function App() {
 
     loadQuestions();
   }, []);
+
+  useEffect(() => {
+    if (!questions.length) return;
+
+    if (resumeQuestionId) {
+      const idx = questions.findIndex((q) => q.id === resumeQuestionId);
+      if (idx >= 0) {
+        setCurrentIndex(idx);
+      } else {
+        setCurrentIndex(0);
+      }
+    } else {
+      setCurrentIndex(0);
+    }
+  }, [resumeQuestionId, questions]);
 
   const currentQuestion = questions[currentIndex];
   const hasOptions = currentQuestion?.options?.length > 0;
@@ -68,6 +87,54 @@ function App() {
 
   const handleLoginChange = (field, value) => {
     setLoginForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const loadCachedAnswer = (question) => {
+    prefillingRef.current = true;
+    const cachedValue = question
+      ? answeredCacheRef.current.get(question.id)
+      : null;
+
+    if (!question || !cachedValue) {
+      setSelectedOption("");
+      setTextAnswer("");
+    } else if (question.options?.some((opt) => opt.value === cachedValue)) {
+      setSelectedOption(cachedValue);
+      setTextAnswer("");
+    } else {
+      setTextAnswer(cachedValue);
+      setSelectedOption("");
+    }
+    prefillingRef.current = false;
+    setIsDirty(false);
+  };
+
+  useEffect(() => {
+    if (!currentQuestion) {
+      setSelectedOption("");
+      setTextAnswer("");
+      setIsDirty(false);
+      return;
+    }
+    loadCachedAnswer(currentQuestion);
+  }, [currentQuestion ? currentQuestion.id : null]);
+
+  const handleOptionSelect = (value) => {
+    setSelectedOption(value);
+    setTextAnswer("");
+    if (!prefillingRef.current) setIsDirty(true);
+  };
+
+  const handleTextChange = (value) => {
+    setTextAnswer(value);
+    setSelectedOption("");
+    if (!prefillingRef.current) setIsDirty(true);
+  };
+
+  const handlePrev = () => {
+    if (currentIndex === 0) return;
+    setCurrentIndex((prev) => Math.max(prev - 1, 0));
+    setIsDirty(false);
   };
 
   const handleSignupSubmit = async (event) => {
@@ -97,6 +164,11 @@ function App() {
       }
 
       setMotherId(data.mother_id);
+      setResumeQuestionId(null);
+      answeredCacheRef.current = new Map();
+      setSelectedOption("");
+      setTextAnswer("");
+      setIsDirty(false);
       setStep("questions");
     } catch (err) {
       console.error(err);
@@ -126,6 +198,38 @@ function App() {
       }
 
       setMotherId(data.mother_id);
+      const answeredEntries = Object.entries(data.answered_answers || {}).map(
+        ([key, value]) => [Number(key), value]
+      );
+      answeredCacheRef.current = new Map(answeredEntries);
+
+      const resumeId = data.resume_question_id ?? null;
+      setResumeQuestionId(resumeId);
+      setIsDirty(false);
+
+      const totalQuestions = questions.length;
+      const answeredCount = answeredEntries.length;
+
+      if (
+        !resumeId &&
+        answeredCount > 0 &&
+        totalQuestions > 0 &&
+        answeredCount >= totalQuestions
+      ) {
+        setStep("done");
+        return;
+      }
+
+      if (resumeId && totalQuestions > 0) {
+        const targetIndex = questions.findIndex((q) => q.id === resumeId);
+        if (targetIndex >= 0) {
+          setCurrentIndex(targetIndex);
+        }
+      } else if (!resumeId && answeredCount > 0 && totalQuestions > 0) {
+        const nextIndex = Math.min(answeredCount, totalQuestions - 1);
+        setCurrentIndex(nextIndex);
+      }
+
       setStep("questions");
     } catch (err) {
       console.error(err);
@@ -138,6 +242,16 @@ function App() {
   const handleAnswerSubmit = async (event) => {
     event.preventDefault();
     if (!motherId || !currentQuestion) return;
+
+    const cachedValue = answeredCacheRef.current.get(currentQuestion.id);
+    if (!isDirty && cachedValue) {
+      if (currentIndex === questions.length - 1) {
+        setStep("done");
+      } else {
+        setCurrentIndex((prev) => prev + 1);
+      }
+      return;
+    }
 
     const answer = hasOptions ? selectedOption : textAnswer.trim();
     if (!answer) return;
@@ -158,12 +272,13 @@ function App() {
         throw new Error(data?.detail || "Unable to save answer");
       }
 
+      answeredCacheRef.current.set(currentQuestion.id, answer);
+      setIsDirty(false);
+
       if (currentIndex === questions.length - 1) {
         setStep("done");
       } else {
         setCurrentIndex((prev) => prev + 1);
-        setSelectedOption("");
-        setTextAnswer("");
       }
     } catch (err) {
       console.error(err);
@@ -176,14 +291,19 @@ function App() {
   const showAuthForm = step === "auth";
   const isFinished = step === "done";
 
+  const cachedAnswer = currentQuestion
+    ? answeredCacheRef.current.get(currentQuestion.id)
+    : null;
+
+  const questionReady = hasOptions
+    ? Boolean(selectedOption || (!isDirty && cachedAnswer))
+    : Boolean(textAnswer.trim() || (!isDirty && cachedAnswer));
+
   const submitDisabled = showAuthForm
     ? authMode === "signup"
       ? !signupValid || isSubmitting
       : !loginValid || isSubmitting
-    : isSubmitting ||
-      !currentQuestion ||
-      (!hasOptions && !textAnswer.trim()) ||
-      (hasOptions && !selectedOption);
+    : isSubmitting || !currentQuestion || !questionReady;
 
   const buttonLabel = showAuthForm
     ? authMode === "signup"
@@ -197,7 +317,9 @@ function App() {
     ? authMode === "signup"
       ? "Step 1 of 2 · Create your Majka profile"
       : "Step 1 of 2 · Sign in to Majka"
-    : `Question ${currentIndex + 1} of ${questions.length}`;
+    : questions.length
+      ? `Question ${currentIndex + 1} of ${questions.length}`
+      : "No questions available";
 
   const onSubmit =
     step === "auth"
@@ -368,7 +490,7 @@ function App() {
                                 value={option.value}
                                 checked={selectedOption === option.value}
                                 onChange={(e) =>
-                                  setSelectedOption(e.target.value)
+                                  handleOptionSelect(e.target.value)
                                 }
                               />
                               <span>{option.label}</span>
@@ -380,7 +502,7 @@ function App() {
                           className="answer-input"
                           placeholder="Type your answer here."
                           value={textAnswer}
-                          onChange={(e) => setTextAnswer(e.target.value)}
+                          onChange={(e) => handleTextChange(e.target.value)}
                         />
                       )}
                     </>
@@ -394,9 +516,25 @@ function App() {
             </div>
             <div className="card-footer">
               <div className="progress">{progressLabel}</div>
-              <button type="submit" className="submit-btn" disabled={submitDisabled}>
-                {buttonLabel}
-              </button>
+              {showAuthForm ? (
+                <button type="submit" className="submit-btn" disabled={submitDisabled}>
+                  {buttonLabel}
+                </button>
+              ) : (
+                <div className="nav-buttons">
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={handlePrev}
+                    disabled={currentIndex === 0 || isSubmitting}
+                  >
+                    Previous
+                  </button>
+                  <button type="submit" className="submit-btn" disabled={submitDisabled}>
+                    {buttonLabel}
+                  </button>
+                </div>
+              )}
             </div>
           </form>
         ) : (

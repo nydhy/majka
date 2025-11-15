@@ -37,6 +37,7 @@ SUPABASE_MOTHERS_TABLE = os.getenv("SUPABASE_MOTHERS_TABLE", "mothers")
 SUPABASE_QUESTIONS_TABLE = os.getenv("SUPABASE_QUESTIONS_TABLE", "questions")
 SUPABASE_ANSWERS_TABLE = os.getenv("SUPABASE_ANSWERS_TABLE", "answers")
 SUPABASE_OPTIONS_TABLE = os.getenv("SUPABASE_OPTIONS_TABLE", "question_options")
+MAX_QUESTION_ORDER = int(os.getenv("MAX_QUESTION_ORDER", "18"))
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError(
@@ -142,6 +143,47 @@ def login(payload: LoginPayload):
     if not _verify_password(payload.password, record.get("password_hash")):
         raise HTTPException(status_code=401, detail="Invalid name or password")
 
+    answers_resp = (
+        supabase.table(SUPABASE_ANSWERS_TABLE)
+        .select("question_id,answer_text")
+        .eq("mother_id", record["id"])
+        .order("question_id")
+        .execute()
+    )
+    answers_error = _resp_error(answers_resp)
+    answered_question_ids = set()
+    answered_map: dict[str, str] = {}
+    if answers_error:
+        raise HTTPException(status_code=500, detail=str(answers_error))
+    for answer in _resp_data(answers_resp) or []:
+        qid = answer["question_id"]
+        answered_question_ids.add(qid)
+        answered_map[str(qid)] = answer.get("answer_text")
+
+    questions_resp = (
+        supabase.table(SUPABASE_QUESTIONS_TABLE)
+        .select("id,order_index")
+        .eq("is_active", True)
+        .lte("order_index", MAX_QUESTION_ORDER)
+        .order("order_index")
+        .execute()
+    )
+    questions_error = _resp_error(questions_resp)
+    if questions_error:
+        raise HTTPException(status_code=500, detail=str(questions_error))
+
+    questions = _resp_data(questions_resp) or []
+    resume_question_id = None
+    for question in questions:
+        if question["id"] not in answered_question_ids:
+            resume_question_id = question["id"]
+            break
+
+    valid_ids = {str(q["id"]) for q in questions}
+    filtered_answers = {
+        key: value for key, value in answered_map.items() if key in valid_ids
+    }
+
     return {
         "mother_id": record["id"],
         "profile": {
@@ -150,6 +192,8 @@ def login(payload: LoginPayload):
             "country": record.get("country"),
             "delivered_at": record.get("delivered_at"),
         },
+        "resume_question_id": resume_question_id,
+        "answered_answers": filtered_answers,
     }
 
 
@@ -159,6 +203,7 @@ def list_questions():
         supabase.table(SUPABASE_QUESTIONS_TABLE)
         .select("id,text,order_index,is_active")
         .eq("is_active", True)
+        .lte("order_index", MAX_QUESTION_ORDER)
         .order("order_index")
         .execute()
     )
@@ -203,6 +248,17 @@ def list_questions():
 @app.post("/api/answer")
 def save_answer(payload: AnswerPayload):
     now = datetime.utcnow().isoformat()
+
+    cleanup = (
+        supabase.table(SUPABASE_ANSWERS_TABLE)
+        .delete()
+        .eq("mother_id", payload.mother_id)
+        .eq("question_id", payload.question_id)
+        .execute()
+    )
+    cleanup_error = _resp_error(cleanup)
+    if cleanup_error:
+        raise HTTPException(status_code=500, detail=str(cleanup_error))
 
     record = {
         "mother_id": payload.mother_id,
