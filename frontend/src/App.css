@@ -1,0 +1,143 @@
+:root {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at top, #ffd6f3 0, #ffb6e6 30%, #ff9ad9 60%, #ff7ac0 100%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#root {
+  width: 100%;
+}
+
+.app-container {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.card-wrapper {
+  padding: 20px;
+}
+
+/* Card */
+.uiverse-card {
+  width: min(500px, 90vw);
+  background: #ffeef8;
+  border-radius: 24px;
+  padding: 24px 24px 20px;
+  box-shadow:
+    10px 10px 30px rgba(255, 0, 128, 0.3),
+    -10px -10px 30px rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(14px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Header */
+.card-header {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.chip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-weight: 600;
+  color: #ff3c8e;
+}
+
+/* Body */
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.question-text {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: #5a1045;
+}
+
+.answer-input {
+  margin-top: 8px;
+  min-height: 90px;
+  resize: vertical;
+  border-radius: 16px;
+  border: none;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  background: rgba(255, 255, 255, 0.9);
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 0, 128, 0.15);
+}
+
+.answer-input:focus {
+  box-shadow:
+    0 0 0 2px rgba(255, 0, 128, 0.4),
+    inset 0 0 0 1px rgba(255, 0, 128, 0.25);
+}
+
+/* Footer */
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.progress {
+  font-size: 13px;
+  color: #9b2c6b;
+}
+
+.submit-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: linear-gradient(135deg, #ff4a9b, #ff79c8);
+  color: white;
+  box-shadow: 0 8px 18px rgba(255, 0, 128, 0.4);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+.submit-btn:disabled {
+  filter: grayscale(0.2);
+  opacity: 0.8;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.submit-btn:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(255, 0, 128, 0.5);
+}
+
+.submit-btn:not(:disabled):active {
+  transform: translateY(0px);
+  box-shadow: 0 6px 14px rgba(255, 0, 128, 0.4);
+}
+
+.thankyou-text {
+  margin-top: 8px;
+  font-size: 14px;
+  color: #7b2a5e;
+}
