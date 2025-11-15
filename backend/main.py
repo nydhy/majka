@@ -1,5 +1,4 @@
 import os
-import uuid
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -8,9 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import Client, create_client
 
+
+class MotherPayload(BaseModel):
+    name: str
+    age: int | None = None
+    country: str | None = None
+    delivered_at: datetime | None = None
+
+
 class AnswerPayload(BaseModel):
-    session_id: str | None = None
-    question: str
+    mother_id: int
+    question_id: int
     answer: str
 
 load_dotenv()
@@ -22,6 +29,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv(
 SUPABASE_MOTHERS_TABLE = os.getenv("SUPABASE_MOTHERS_TABLE", "mothers")
 SUPABASE_QUESTIONS_TABLE = os.getenv("SUPABASE_QUESTIONS_TABLE", "questions")
 SUPABASE_ANSWERS_TABLE = os.getenv("SUPABASE_ANSWERS_TABLE", "answers")
+SUPABASE_OPTIONS_TABLE = os.getenv("SUPABASE_OPTIONS_TABLE", "question_options")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError(
@@ -40,67 +48,108 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def _ensure_mother(session_id: str | None) -> tuple[str, int]:
-    """Return (session_id, mother_id). Creates mother when session missing."""
-    if session_id:
-        try:
-            mother_id = int(session_id)
-            return session_id, mother_id
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid session_id") from exc
-
-    placeholder_name = f"Session {uuid.uuid4().hex[:8]}"
-    response = (
-        supabase.table(SUPABASE_MOTHERS_TABLE)
-        .insert({"name": placeholder_name})
-        .execute()
-    )
-    if response.error or not response.data:
-        raise HTTPException(
-            status_code=500, detail=str(response.error or "Unable to create mother")
-        )
-
-    mother_id = response.data[0]["id"]
-    return str(mother_id), mother_id
+def _resp_error(resp):
+    return getattr(resp, "error", None)
 
 
-def _get_question_id(question_text: str) -> int:
-    response = (
+def _resp_data(resp):
+    return getattr(resp, "data", None)
+
+
+@app.post("/api/mothers")
+def create_mother(payload: MotherPayload):
+    try:
+        record = {
+            "name": payload.name,
+            "age": payload.age,
+            "country": payload.country,
+            "delivered_at": payload.delivered_at.isoformat()
+            if payload.delivered_at
+            else None,
+        }
+
+        response = supabase.table(SUPABASE_MOTHERS_TABLE).insert(record).execute()
+        error = _resp_error(response)
+        data = _resp_data(response)
+        if error or not data:
+            raise HTTPException(
+                status_code=500,
+                detail=str(error or "Unable to create mother record"),
+            )
+
+        return {"mother_id": data[0]["id"]}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/questions")
+def list_questions():
+    questions_resp = (
         supabase.table(SUPABASE_QUESTIONS_TABLE)
-        .select("id")
-        .eq("text", question_text)
-        .limit(1)
+        .select("id,text,order_index,is_active")
+        .eq("is_active", True)
+        .order("order_index")
         .execute()
     )
-    if response.error:
-        raise HTTPException(status_code=500, detail=str(response.error))
-    if not response.data:
-        raise HTTPException(status_code=404, detail="Question not configured in DB")
+    error = _resp_error(questions_resp)
+    if error:
+        raise HTTPException(status_code=500, detail=str(error))
 
-    return response.data[0]["id"]
+    questions = _resp_data(questions_resp) or []
+    if not questions:
+        return []
+
+    question_ids = [q["id"] for q in questions]
+    options_by_question: dict[int, list[dict]] = {qid: [] for qid in question_ids}
+    if question_ids:
+        options_resp = (
+            supabase.table(SUPABASE_OPTIONS_TABLE)
+            .select("id,question_id,label,value,order_index")
+            .in_("question_id", question_ids)
+            .order("order_index")
+            .execute()
+        )
+        error = _resp_error(options_resp)
+        if error:
+            raise HTTPException(status_code=500, detail=str(error))
+        for option in _resp_data(options_resp) or []:
+            options_by_question.setdefault(option["question_id"], []).append(option)
+
+    result = []
+    for question in questions:
+        result.append(
+            {
+                "id": question["id"],
+                "text": question["text"],
+                "order_index": question["order_index"],
+                "options": options_by_question.get(question["id"], []),
+            }
+        )
+    return result
 
 
+@app.post("/api/answers")
 @app.post("/api/answer")
 def save_answer(payload: AnswerPayload):
-    session_id, mother_id = _ensure_mother(payload.session_id)
-    question_id = _get_question_id(payload.question)
     now = datetime.utcnow().isoformat()
 
     record = {
-        "mother_id": mother_id,
-        "question_id": question_id,
+        "mother_id": payload.mother_id,
+        "question_id": payload.question_id,
         "answer_text": payload.answer,
         "created_at": now,
     }
 
     response = supabase.table(SUPABASE_ANSWERS_TABLE).insert(record).execute()
+    error = _resp_error(response)
+    if error:
+        raise HTTPException(status_code=500, detail=str(error))
 
-    if response.error:
-        raise HTTPException(status_code=500, detail=str(response.error))
-
-    inserted = response.data[0] if response.data else {}
+    data = _resp_data(response) or []
+    inserted = data[0] if data else {}
     return {
         "status": "ok",
-        "session_id": session_id,
         "answer_id": inserted.get("id"),
     }
