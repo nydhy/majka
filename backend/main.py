@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 
 import bcrypt
+import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +28,10 @@ class AnswerPayload(BaseModel):
     question_id: int
     answer: str
 
+
+class RecommendationPayload(BaseModel):
+    mother_id: int
+
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -38,11 +43,29 @@ SUPABASE_QUESTIONS_TABLE = os.getenv("SUPABASE_QUESTIONS_TABLE", "questions")
 SUPABASE_ANSWERS_TABLE = os.getenv("SUPABASE_ANSWERS_TABLE", "answers")
 SUPABASE_OPTIONS_TABLE = os.getenv("SUPABASE_OPTIONS_TABLE", "question_options")
 MAX_QUESTION_ORDER = int(os.getenv("MAX_QUESTION_ORDER", "18"))
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+EXERCISES = [
+    "Diaphragmatic breathing with pelvic-floor engagement",
+    "Supine pelvic tilts",
+    "Glute bridges with light band",
+    "Cat-cow spinal mobility",
+    "Side-lying clamshells",
+    "Supported wall sit pulses",
+    "Chair-assisted squats",
+    "Bird-dog holds",
+    "Seated thoracic rotations",
+    "Standing calf raises with support",
+]
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError(
         "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY"
     )
+
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -75,6 +98,77 @@ def _verify_password(password: str, hashed: str | None) -> bool:
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
     except ValueError:
         return False
+
+
+def _fetch_answer_pairs(mother_id: int):
+    questions_resp = (
+        supabase.table(SUPABASE_QUESTIONS_TABLE)
+        .select("id,text,order_index")
+        .eq("is_active", True)
+        .lte("order_index", MAX_QUESTION_ORDER)
+        .order("order_index")
+        .execute()
+    )
+    q_error = _resp_error(questions_resp)
+    if q_error:
+        raise HTTPException(status_code=500, detail=str(q_error))
+
+    questions = _resp_data(questions_resp) or []
+    question_map = {q["id"]: q for q in questions}
+
+    answers_resp = (
+        supabase.table(SUPABASE_ANSWERS_TABLE)
+        .select("question_id,answer_text")
+        .eq("mother_id", mother_id)
+        .execute()
+    )
+    a_error = _resp_error(answers_resp)
+    if a_error:
+        raise HTTPException(status_code=500, detail=str(a_error))
+
+    answers = _resp_data(answers_resp) or []
+    answer_map = {row["question_id"]: row["answer_text"] for row in answers}
+
+    pairs = []
+    for question in questions:
+        answer = answer_map.get(question["id"])
+        if answer:
+            pairs.append(
+                {
+                    "question": question["text"],
+                    "answer": answer,
+                    "order_index": question["order_index"],
+                }
+            )
+    return pairs
+
+
+def _build_recommendation_prompt(pairs: list[dict]):
+    qa_section = "\n".join(
+        [
+            f"{idx + 1}. Question: {item['question']}\n   Answer: {item['answer']}"
+            for idx, item in enumerate(pairs)
+        ]
+    )
+    exercise_section = "\n".join(f"- {exercise}" for exercise in EXERCISES)
+
+    prompt = f"""
+You are Majka, a warm postpartum recovery coach. Using the intake answers below,
+curate a gentle exercise plan using only exercises from the approved list.
+
+Intake answers:
+{qa_section}
+
+Approved exercise library:
+{exercise_section}
+
+Provide:
+1. A short supportive paragraph acknowledging how the mother is feeling.
+2. 3-4 specific exercises from the list (name + why it fits), ordered from warm-up to main work.
+3. Optional breathing / recovery reminder.
+Keep the tone kind and encouraging. Do not invent exercises outside the list.
+"""
+    return prompt.strip()
 
 
 @app.post("/api/mothers")
@@ -278,3 +372,32 @@ def save_answer(payload: AnswerPayload):
         "status": "ok",
         "answer_id": inserted.get("id"),
     }
+
+
+@app.post("/api/recommendations")
+def generate_recommendations(payload: RecommendationPayload):
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="GEMINI_API_KEY is not configured on the server.",
+        )
+
+    pairs = _fetch_answer_pairs(payload.mother_id)
+    if not pairs:
+        raise HTTPException(
+            status_code=400,
+            detail="No answers found for this mother. Please complete the intake first.",
+        )
+
+    prompt = _build_recommendation_prompt(pairs)
+
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(prompt)
+        plan_text = (response.text or "").strip()
+        if not plan_text:
+            raise ValueError("Empty response from Gemini model")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Gemini error: {exc}") from exc
+
+    return {"plan": plan_text}

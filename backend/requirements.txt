@@ -3,4 +3,5 @@ uvicorn[standard]
 python-dotenv
 supabase
 bcrypt
+google-generativeai
 SQLAlchemy==2.0.36
