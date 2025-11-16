@@ -47,9 +47,10 @@ body {
 /* Header */
 .card-header {
   display: flex;
-  justify-content: flex-start;
+  flex-direction: column;
+  justify-content: center;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .hamburger-wrapper {
@@ -105,6 +106,69 @@ body {
   background: rgba(255, 122, 192, 0.15);
 }
 
+.voicebot-panel {
+  width: min(360px, 90vw);
+  background: #fff7fb;
+  border-radius: 24px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 20px 40px rgba(90, 16, 69, 0.35);
+}
+
+.voice-logo {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: #fde0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.voice-logo img {
+  width: 85%;
+  height: 85%;
+  object-fit: contain;
+}
+
+.voice-pulse {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 74, 155, 0.4);
+  animation: pulse 2s infinite ease-in-out;
+}
+
+.pulse-2 {
+  animation-delay: 1s;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+.voicebot-text {
+  text-align: center;
+  color: #5b0d49;
+  margin: 0;
+  font-size: 15px;
+}
+
 .chip {
   padding: 4px 12px;
   border-radius: 999px;
@@ -115,7 +179,7 @@ body {
 }
 
 .logo-mark {
-  width: 56px;
+  width: 110px;
   height: auto;
 }
 
@@ -793,4 +857,7 @@ body {
   position: absolute;
   top: 40px;
   left: 0;
+}
+.voicebot-close {
+  align-self: flex-end;
 }
