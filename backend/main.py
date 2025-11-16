@@ -14,7 +14,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import Client, create_client
-
+from postgrest.exceptions import APIError
+from datetime import datetime, timezone, timedelta
 
 class MotherPayload(BaseModel):
     name: str
@@ -45,7 +46,7 @@ class GuidedSessionPayload(BaseModel):
 
 class ChatPayload(BaseModel):
     question: str
-    mother_id: int | None = None
+    mother_id: int
     mother_name: str | None = None
 
 load_dotenv()
@@ -115,12 +116,17 @@ if GEMINI_API_KEY:
 else:
     raise RuntimeError("GEMINI_API_KEY is required for Majka AI features.")
 
-CHAT_SYSTEM_PROMPT = """
-You are 'Majka,' a warm, nurturing companion for postpartum mothers.
-Your priorities:
-1. Safety first — never give medical advice or diagnoses; direct urgent issues to a doctor or emergency services.
-2. Keep the tone gentle, encouraging, and realistic (like a trusted friend).
-3. Offer emotional support, practical tips, or reminders about the plan only when safe.
+CHAT_SYSTEM_PROMPT = """You are 'Majka,' a warm, nurturing, and a friendly, human-sounding AI assistant for new mothers. Your goal is to provide **direct, relevant, and focused answers** to the user's current question regarding postpartum recovery, rehabilitation, and newborn care.
+
+### CORE DIRECTIVES
+
+1.  **SAFETY FIRST (CRITICAL):** You MUST NOT give any medical advice, diagnosis, or treatment recommendations.
+    * **CRITICAL RED FLAG:** The safety override *only* activates if the user's **CURRENT QUESTION** mentions **bleeding, fever, pus, severe headache, dizziness, or EXPLICITLY suicidal or self-harming thoughts (e.g., 'I want to hurt myself', 'I'm thinking of killing myself')**. If triggered, your ONLY response is: 'That sounds serious, and your safety is most important. Please stop and call your doctor or 911 immediately.'
+    * **CONTEXT USE:** Use the intake data (name, age, QA pairs) only for *personalization and relevance*, not as a primary trigger for the safety override. Unless the CURRENT question is a Red Flag, prioritize answering the question asked.
+2.  **DIRECTNESS & FOCUS:** Answer only the user's question. **DO NOT** blabber, offer unsolicited validation, or introduce irrelevant topics.
+    * **EMOTIONAL SUPPORT:** If the user expresses general **tiredness, frustration, or overwhelm** (e.g., "I need a break," "I'm exhausted"), you must immediately provide a **direct, simple, and safe action** as the answer (e.g., "Go drink a full glass of water," "Take three deep breaths," or "Rest for 10 minutes"). Do not analyze or over-validate.
+3.  **TOPIC SCOPE:** Keep the conversation focused on **postpartum recovery, rehabilitation, and newborn care**.
+    * **IRRELEVANT QUERY:** If the user asks about an unrelated topic (e.g., Adele, history, cooking), you MUST gently nudge the user to query an alternate general chatbot for that specific request. Keep it casual and friendly.
 """
 
 CHAT_SAFETY_SETTINGS = [
@@ -711,21 +717,207 @@ def start_guided_session(payload: GuidedSessionPayload):
         "exercise": exercise_key,
     }
 
-
 @app.post("/ask-majka")
 def ask_majka(payload: ChatPayload):
-    message = (payload.question or "").strip()
-    if not message:
+    """
+    Endpoint to get a safe, contextual text response from Gemini (LLM).
+    
+    Fetches all intake data, summarizes it, and injects it into the prompt.
+    """
+    
+    if not payload.question:
         raise HTTPException(status_code=400, detail="Please provide a question for Majka.")
-    mother_name = (payload.mother_name or "mama").strip()
-    prefixed_question = f"{mother_name} asks: {message}"
-    try:
-        response = chat_model.generate_content(prefixed_question)
-        answer = (response.text or "I'm here for you, mama.").strip()
-    except Exception as exc:  # pragma: no cover - external API
-        raise HTTPException(status_code=500, detail=f"Majka chat error: {exc}") from exc
-    return {"answer": answer}
+    
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured.")
 
+    try:
+        # 1. Retrieve and Build Full Context (Profile + QA Answers)
+        full_context_string, user_data = _build_chat_context(payload.mother_id)
+        
+        # 2. Construct Final Prompt
+        full_prompt = full_context_string + "\n\nUser's Current Question: " + payload.question
+
+        # 3. Call the Gemini model for the text response
+        response = chat_model.generate_content(full_prompt)
+        ai_answer = (response.text or "I'm here for you, mama.").strip()
+
+        # 4. Send the answer and basic user data back
+        return {"answer": ai_answer, "user_data": user_data}
+
+    except HTTPException:
+        # Re-raise explicit HTTP exceptions (e.g., 400, 404, 500 DB errors)
+        raise
+    except Exception as exc:
+        # Catch unexpected errors (e.g., Gemini service failure)
+        print(f"Gemini Error for mother {payload.mother_id}: {exc}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to get response from AI"
+        )
+
+def get_user_data_and_age(mother_id: int):
+    """
+    Fetches mother's name and delivery date from the DB (SUPABASE_MOTHERS_TABLE) 
+    and calculates the baby's age in weeks.
+
+    Raises HTTPException on failure (400, 404, 500, 503).
+    """
+    
+    # CRITICAL: Validate mother_id before using it in the query.
+    if mother_id is None:
+        raise HTTPException(status_code=400, detail="Missing mother ID for personalized chat.")
+    
+    try:
+        # Ensure the ID is a proper integer for the DB query, 
+        # handling cases where it might be passed as a string.
+        mother_id_int = int(mother_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid mother ID format. Must be an integer.")
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database service is unavailable.")
+    
+    try:
+        # Use SUPABASE_MOTHERS_TABLE (defined in your main.py environment)
+        response = (
+            supabase.table(SUPABASE_MOTHERS_TABLE)
+            .select("name,delivered_at") 
+            .eq('id', mother_id_int)
+            .single()
+            .execute()
+        )
+        
+        user_profile = response.data
+        
+        # This check is mostly defensive, as .single() usually handles the 404 case.
+        if not user_profile:
+            raise HTTPException(status_code=404, detail=f"Mother with ID '{mother_id_int}' not found.")
+
+        # --- Enforce Required Fields ---
+        required_fields = ["name", "delivered_at"]
+        
+        for field in required_fields:
+            if user_profile.get(field) is None:
+                print(f"Missing data error for mother {mother_id_int}: '{field}' is null or missing.")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"User profile incomplete. Missing required field: '{field}'."
+                )
+        
+        # --- Calculate Age in Weeks from delivered_at ---
+        delivered_at_str = user_profile["delivered_at"]
+        delivered_date = None
+        
+        try:
+            # Handle ISO format from Supabase (e.g., '2023-11-16T08:00:00+00:00')
+            delivered_date = datetime.fromisoformat(delivered_at_str.replace("Z", "+00:00"))
+        except ValueError:
+             # Fallback to the format from llm_service.py 'YYYY-MM-DD HH:MM:SS+00'
+            try:
+                delivered_date = datetime.strptime(delivered_at_str, "%Y-%m-%d %H:%M:%S%z")
+            except ValueError:
+                print(f"Unparseable delivered_at format: {delivered_at_str}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail="User profile contains unparseable 'delivered_at' date format."
+                )
+
+        # Get current time in UTC
+        now_utc = datetime.now(timezone.utc)
+        
+        # Ensure delivered_date is in UTC for the time difference calculation
+        delivered_date_utc = delivered_date.astimezone(timezone.utc)
+        
+        time_difference: timedelta = now_utc - delivered_date_utc
+        # Prevent negative age if the date is in the future
+        baby_age_weeks = max(0, round(time_difference.days / 7))
+        
+        return {
+            "user_name": user_profile["name"],
+            "baby_age_weeks": baby_age_weeks, 
+        }
+
+    except APIError as e:
+        # Catching the exception raised by .single() when no rows are found
+        error_message = str(e)
+        if "No rows returned" in error_message or "not found" in error_message:
+            raise HTTPException(status_code=404, detail=f"Mother with ID '{mother_id_int}' not found.")
+        
+        print(f"Unexpected Supabase query error for ID {mother_id_int}: {error_message}")
+        raise HTTPException(status_code=500, detail="An internal database error occurred.")
+    except HTTPException:
+        # Re-raise exceptions raised internally
+        raise
+    except Exception as e:
+        # Catch other unexpected errors
+        print(f"General database error for ID {mother_id_int}: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred during data retrieval.")
+    
+def _build_chat_context(mother_id: int) -> tuple[str, dict]:
+    """
+    Fetches mother profile and all intake answers, formats them for the LLM.
+
+    Returns: (context_string, user_data_dict)
+    """
+    if mother_id is None:
+        raise HTTPException(status_code=400, detail="Missing mother ID for personalized chat.")
+    
+    try:
+        # These utility functions are assumed to be present and working:
+        mother_profile = _fetch_mother_profile(mother_id) 
+        qa_pairs = _fetch_answer_pairs(mother_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database retrieval error: {e}")
+
+    # 1. Calculate Postpartum Age
+    delivered_at_str = mother_profile.get("delivered_at")
+    postpartum_weeks = 0
+    
+    if delivered_at_str:
+        try:
+            delivered_dt = datetime.fromisoformat(delivered_at_str.replace("Z", "+00:00"))
+            delivered_dt_utc = delivered_dt.astimezone(timezone.utc)
+            
+            now_utc = datetime.now(timezone.utc)
+            time_difference: timedelta = now_utc - delivered_dt_utc
+            postpartum_weeks = max(0, round(time_difference.days / 7))
+        except ValueError:
+            pass # Age remains 0 if date is unparseable
+
+    # 2. Format QA Pairs Summary
+    qa_summary = "\n".join(
+        [
+            f"Q: {pair['question']} A: {pair['answer']}"
+            for pair in qa_pairs
+        ]
+    )
+
+    # 3. Construct the Context String for the LLM
+    context_prefix = (
+        f"The user's name is **{mother_profile.get('name', 'mama')}** and their baby is approximately "
+        f"**{postpartum_weeks} weeks old**. Use this information to personalize your response. "
+    )
+    
+    context_intake = (
+        "\n\nTheir intake answers provide further context on their recovery status:\n"
+        "--- START INTAKE DATA ---\n"
+        f"{qa_summary}"
+        "\n--- END INTAKE DATA ---\n"
+        "Reference this intake data to provide highly relevant and safe advice. For example, "
+        "if they mention a high pain score or heavy bleeding in the intake, use the CRITICAL RULE "
+        "even if the current question is benign. Prioritize safety based on the most severe answer found."
+    )
+    
+    user_data = {
+        "user_name": mother_profile.get('name'),
+        "baby_age_weeks": postpartum_weeks,
+        "intake_questions_answered": len(qa_pairs),
+    }
+
+    return context_prefix + context_intake, user_data
 
 @app.get("/api/mothers/{mother_id}/profile")
 def get_mother_profile_detail(mother_id: int):
