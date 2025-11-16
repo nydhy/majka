@@ -338,9 +338,9 @@ Respond with valid JSON in this shape, using the casual, human tone in all text 
 
 Do not include backticks or any explanation outside the JSON.
 """
-    print(prompt)
-    with open("prompt.txt", "w") as text_file:
-        text_file.write(prompt)
+    # print(prompt)
+    # with open("prompt.txt", "w") as text_file:
+    #     text_file.write(prompt)
     return prompt.strip()
 
 
