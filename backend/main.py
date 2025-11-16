@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import Client, create_client
-
+from postgrest.exceptions import APIError
 
 class MotherPayload(BaseModel):
     name: str
@@ -670,17 +670,140 @@ def start_guided_session(payload: GuidedSessionPayload):
         "exercise": exercise_key,
     }
 
-
 @app.post("/ask-majka")
 def ask_majka(payload: ChatPayload):
+    """Endpoint to get a safe, text response from Gemini (LLM) using user context."""
     message = (payload.question or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Please provide a question for Majka.")
-    mother_name = (payload.mother_name or "mama").strip()
-    prefixed_question = f"{mother_name} asks: {message}"
+    
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured.")
+
+    # 1. Retrieve User Data and Calculate Age.
+    # This call will raise HTTPException 404 or 5xx on failure.
+    user_data = get_user_data_and_age(payload.mother_id)
+    
+    # 2. Construct Contextual Prompt
+    context_prefix = (
+        f"The user is named {user_data['user_name']}, and their baby is approximately "
+        f"{user_data['baby_age_weeks']} weeks old. Use this context to personalize your response "
+        f"(e.g., refer to the user's name and the baby's age). "
+    )
+    full_prompt = context_prefix + payload.question
+
     try:
-        response = chat_model.generate_content(prefixed_question)
-        answer = (response.text or "I'm here for you, mama.").strip()
-    except Exception as exc:  # pragma: no cover - external API
-        raise HTTPException(status_code=500, detail=f"Majka chat error: {exc}") from exc
-    return {"answer": answer}
+        # Call the Gemini model for the text response
+        response = chat_model.generate_content(full_prompt)
+        ai_answer = (response.text or "I'm here for you, mama.").strip()
+
+        # 3. Send the answer and user data back
+        return {"answer": ai_answer, "user_data": user_data}
+
+    except Exception as exc:
+        # This catches any remaining exceptions, including Gemini errors.
+        print(f"Gemini Error: {exc}")
+        # Raise an HTTPException, the FastAPI way
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to get response from AI"
+        )
+
+
+def get_user_data_and_age(mother_id: int):
+    """
+    Fetches mother's name and delivery date from the DB (SUPABASE_MOTHERS_TABLE) 
+    and calculates the baby's age in weeks.
+
+    Raises HTTPException on failure (400, 404, 500, 503).
+    """
+    
+    # CRITICAL: Validate mother_id before using it in the query.
+    if mother_id is None:
+        raise HTTPException(status_code=400, detail="Missing mother ID for personalized chat.")
+    
+    try:
+        # Ensure the ID is a proper integer for the DB query, 
+        # handling cases where it might be passed as a string.
+        mother_id_int = int(mother_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid mother ID format. Must be an integer.")
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Database service is unavailable.")
+    
+    try:
+        # Use SUPABASE_MOTHERS_TABLE (defined in your main.py environment)
+        response = (
+            supabase.table(SUPABASE_MOTHERS_TABLE)
+            .select("name,delivered_at") 
+            .eq('id', mother_id_int)
+            .single()
+            .execute()
+        )
+        
+        user_profile = response.data
+        
+        # This check is mostly defensive, as .single() usually handles the 404 case.
+        if not user_profile:
+            raise HTTPException(status_code=404, detail=f"Mother with ID '{mother_id_int}' not found.")
+
+        # --- Enforce Required Fields ---
+        required_fields = ["name", "delivered_at"]
+        
+        for field in required_fields:
+            if user_profile.get(field) is None:
+                print(f"Missing data error for mother {mother_id_int}: '{field}' is null or missing.")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"User profile incomplete. Missing required field: '{field}'."
+                )
+        
+        # --- Calculate Age in Weeks from delivered_at ---
+        delivered_at_str = user_profile["delivered_at"]
+        delivered_date = None
+        
+        try:
+            # Handle ISO format from Supabase (e.g., '2023-11-16T08:00:00+00:00')
+            delivered_date = datetime.fromisoformat(delivered_at_str.replace("Z", "+00:00"))
+        except ValueError:
+             # Fallback to the format from llm_service.py 'YYYY-MM-DD HH:MM:SS+00'
+            try:
+                delivered_date = datetime.strptime(delivered_at_str, "%Y-%m-%d %H:%M:%S%z")
+            except ValueError:
+                print(f"Unparseable delivered_at format: {delivered_at_str}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail="User profile contains unparseable 'delivered_at' date format."
+                )
+
+        # Get current time in UTC
+        now_utc = datetime.now(timezone.utc)
+        
+        # Ensure delivered_date is in UTC for the time difference calculation
+        delivered_date_utc = delivered_date.astimezone(timezone.utc)
+        
+        time_difference: timedelta = now_utc - delivered_date_utc
+        # Prevent negative age if the date is in the future
+        baby_age_weeks = max(0, round(time_difference.days / 7))
+        
+        return {
+            "user_name": user_profile["name"],
+            "baby_age_weeks": baby_age_weeks, 
+        }
+
+    except APIError as e:
+        # Catching the exception raised by .single() when no rows are found
+        error_message = str(e)
+        if "No rows returned" in error_message or "not found" in error_message:
+            raise HTTPException(status_code=404, detail=f"Mother with ID '{mother_id_int}' not found.")
+        
+        print(f"Unexpected Supabase query error for ID {mother_id_int}: {error_message}")
+        raise HTTPException(status_code=500, detail="An internal database error occurred.")
+    except HTTPException:
+        # Re-raise exceptions raised internally
+        raise
+    except Exception as e:
+        # Catch other unexpected errors
+        print(f"General database error for ID {mother_id_int}: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred during data retrieval.")
