@@ -3,7 +3,7 @@ import "./App.css";
 import MajkaLogo from "./assets/Majka.png";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
-const BOT_API_BASE = import.meta.env.VITE_BOT_API_URL || "http://localhost:5000";
+const BOT_API_BASE = import.meta.env.VITE_BOT_API_URL || API_BASE;
 
 const INITIAL_SIGNUP = {
   name: "",
@@ -133,7 +133,7 @@ function App() {
       setChatMessages([
         {
           role: "assistant",
-          text: "Hi mama! I’m Majka. Ask me anything about your plan, movement, or how you’re feeling.",
+          text: `Hi ${motherName || "mama"}! I’m Majka. Ask me anything about your plan, movement, or how you’re feeling.`,
         },
       ]);
     }
@@ -152,7 +152,11 @@ function App() {
       const res = await fetch(`${BOT_API_BASE}/ask-majka`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: message }),
+        body: JSON.stringify({
+          question: message,
+          mother_id: motherId,
+          mother_name: motherName,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {

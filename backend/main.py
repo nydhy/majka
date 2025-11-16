@@ -42,6 +42,12 @@ class RecommendationPayload(BaseModel):
 class GuidedSessionPayload(BaseModel):
     exercise: str
 
+
+class ChatPayload(BaseModel):
+    question: str
+    mother_id: int | None = None
+    mother_name: str | None = None
+
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -106,6 +112,29 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
+else:
+    raise RuntimeError("GEMINI_API_KEY is required for Majka AI features.")
+
+CHAT_SYSTEM_PROMPT = """
+You are 'Majka,' a warm, nurturing companion for postpartum mothers.
+Your priorities:
+1. Safety first — never give medical advice or diagnoses; direct urgent issues to a doctor or emergency services.
+2. Keep the tone gentle, encouraging, and realistic (like a trusted friend).
+3. Offer emotional support, practical tips, or reminders about the plan only when safe.
+"""
+
+CHAT_SAFETY_SETTINGS = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+]
+
+chat_model = genai.GenerativeModel(
+    model_name="gemini-2.5-flash",
+    system_instruction=CHAT_SYSTEM_PROMPT,
+    safety_settings=CHAT_SAFETY_SETTINGS,
+)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -640,3 +669,18 @@ def start_guided_session(payload: GuidedSessionPayload):
         "status": "launching",
         "exercise": exercise_key,
     }
+
+
+@app.post("/ask-majka")
+def ask_majka(payload: ChatPayload):
+    message = (payload.question or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Please provide a question for Majka.")
+    mother_name = (payload.mother_name or "mama").strip()
+    prefixed_question = f"{mother_name} asks: {message}"
+    try:
+        response = chat_model.generate_content(prefixed_question)
+        answer = (response.text or "I'm here for you, mama.").strip()
+    except Exception as exc:  # pragma: no cover - external API
+        raise HTTPException(status_code=500, detail=f"Majka chat error: {exc}") from exc
+    return {"answer": answer}
