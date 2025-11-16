@@ -354,7 +354,7 @@ Respond with valid JSON in this shape, using the casual, human tone in all text 
   "intro": "A short, punchy, and genuinely human opening thought about their current recovery status and week.",
   "exercises": [
     {{
-      "title": "Exercise from exercise_section",
+      "title": "Exercise from exercise_section as it is. Do not hallucinate and give the exact name of the exercise from {exercise_section}",
       "summary": "one or two punchy, friendly sentences about the move",
       "why": "Why this move is clutch for them right now (in casual, human language, referencing intake answers).",
       "how": "1-2 easy-to-remember, casual cues.",
@@ -404,9 +404,9 @@ Respond with valid JSON in this shape, using the casual, human tone in all text 
 }}
 Do not include backticks or any explanation outside the JSON.
 """
-    # print(prompt)
-    # with open("prompt.txt", "w") as text_file:
-    #     text_file.write(prompt)
+    print(prompt)
+    with open("prompt.txt", "w") as text_file:
+        text_file.write(prompt)
     if mother_name!="Alice":
         return prompt.strip()
     else:
