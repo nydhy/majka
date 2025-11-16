@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
+import MajkaLogo from "./assets/Majka.png";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -385,6 +386,7 @@ function App() {
             }
           >
             <div className="card-header">
+              <img src={MajkaLogo} alt="Majka logo" className="logo-mark" />
               <span className="chip">
                 {showAuthForm
                   ? authMode === "signup"
@@ -681,6 +683,10 @@ function App() {
                     </button>
                   </div>
                 )}
+              </div>
+              <div className="plan-branding">
+                <img src={MajkaLogo} alt="Majka logo" className="logo-badge" />
+                <span>Majka · Gentle Strength for Mamas</span>
               </div>
             </div>
           </div>

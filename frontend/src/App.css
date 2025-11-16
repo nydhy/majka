@@ -48,6 +48,8 @@ body {
 .card-header {
   display: flex;
   justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
 }
 
 .chip {
@@ -57,6 +59,11 @@ body {
   font-size: 12px;
   font-weight: 600;
   color: #ff3c8e;
+}
+
+.logo-mark {
+  width: 56px;
+  height: auto;
 }
 
 /* Body */
@@ -339,6 +346,20 @@ body {
   gap: 16px;
   font-family: inherit;
   text-align: left;
+}
+
+.plan-branding {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #8c2d68;
+}
+
+.logo-badge {
+  width: 52px;
+  height: auto;
 }
 
 .session-feedback {
