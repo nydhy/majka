@@ -3,56 +3,64 @@ import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+const INITIAL_SIGNUP = {
+  name: "",
+  password: "",
+  age: "",
+  country: "",
+  deliveredAt: "",
+};
+
+const INITIAL_LOGIN = { name: "", password: "" };
+
 function App() {
   const [questions, setQuestions] = useState([]);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(true);
   const [fetchError, setFetchError] = useState("");
 
   const [authMode, setAuthMode] = useState("signup"); // signup | login
-  const [signupForm, setSignupForm] = useState({
-    name: "",
-    password: "",
-    age: "",
-    country: "",
-    deliveredAt: "",
-  });
-  const [loginForm, setLoginForm] = useState({ name: "", password: "" });
+  const [signupForm, setSignupForm] = useState(INITIAL_SIGNUP);
+  const [loginForm, setLoginForm] = useState(INITIAL_LOGIN);
+  const [motherName, setMotherName] = useState("");
   const [motherId, setMotherId] = useState(null);
   const [step, setStep] = useState("auth"); // auth | questions | done
   const [resumeQuestionId, setResumeQuestionId] = useState(null);
 
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [selectedOption, setSelectedOption] = useState("");
-  const [textAnswer, setTextAnswer] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const answeredCacheRef = useRef(new Map());
   const prefillingRef = useRef(false);
+  const [selectedOption, setSelectedOption] = useState("");
+  const [textAnswer, setTextAnswer] = useState("");
   const [isDirty, setIsDirty] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [plan, setPlan] = useState("");
+  const [planStructured, setPlanStructured] = useState(null);
+  const [planRaw, setPlanRaw] = useState("");
   const [planError, setPlanError] = useState("");
   const [planLoading, setPlanLoading] = useState(false);
   const [planRequested, setPlanRequested] = useState(false);
 
-  const signupValid = useMemo(() => {
-    return (
+  const signupValid = useMemo(
+    () =>
       signupForm.name.trim() &&
       signupForm.password.trim() &&
       signupForm.age.trim() &&
       signupForm.country.trim() &&
-      signupForm.deliveredAt
-    );
-  }, [signupForm]);
+      signupForm.deliveredAt,
+    [signupForm]
+  );
 
-  const loginValid = useMemo(() => {
-    return loginForm.name.trim() && loginForm.password.trim();
-  }, [loginForm]);
+  const loginValid = useMemo(
+    () => loginForm.name.trim() && loginForm.password.trim(),
+    [loginForm]
+  );
 
   const resetPlanState = () => {
-    setPlan("");
+    setPlanStructured(null);
+    setPlanRaw("");
     setPlanError("");
-    setPlanRequested(false);
     setPlanLoading(false);
+    setPlanRequested(false);
   };
 
   const fetchPlan = useCallback(async () => {
@@ -67,10 +75,9 @@ function App() {
         body: JSON.stringify({ mother_id: motherId }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.detail || "Unable to generate your plan");
-      }
-      setPlan(data.plan);
+      if (!res.ok) throw new Error(data?.detail || "Unable to generate your plan");
+      setPlanStructured(data.plan || null);
+      setPlanRaw(data.plan_text || "");
     } catch (err) {
       console.error(err);
       setPlanError(err.message || "Unable to generate your plan");
@@ -84,9 +91,7 @@ function App() {
       try {
         const res = await fetch(`${API_BASE}/api/questions`);
         const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.detail || "Unable to load questions");
-        }
+        if (!res.ok) throw new Error(data?.detail || "Unable to load questions");
         setQuestions(data);
       } catch (err) {
         console.error(err);
@@ -95,7 +100,6 @@ function App() {
         setIsLoadingQuestions(false);
       }
     };
-
     loadQuestions();
   }, []);
 
@@ -106,13 +110,8 @@ function App() {
       setCurrentIndex(idx >= 0 ? idx : 0);
       return;
     }
-
-    if (answeredCacheRef.current.size) {
-      const answeredCount = answeredCacheRef.current.size;
-      setCurrentIndex(Math.min(answeredCount, questions.length - 1));
-    } else {
-      setCurrentIndex(0);
-    }
+    const answeredCount = answeredCacheRef.current.size;
+    setCurrentIndex(answeredCount ? Math.min(answeredCount, questions.length - 1) : 0);
   }, [questions, resumeQuestionId]);
 
   useEffect(() => {
@@ -120,28 +119,33 @@ function App() {
       step === "done" &&
       motherId &&
       !planRequested &&
-      !plan &&
+      !planStructured &&
+      !planRaw &&
       !planLoading &&
       !planError
     ) {
       fetchPlan();
     }
-  }, [step, motherId, planRequested, plan, planLoading, planError, fetchPlan]);
+  }, [step, motherId, planRequested, planStructured, planRaw, planLoading, planError, fetchPlan]);
+
+  useEffect(() => {
+    if (step === "done" || !questions.length) return;
+    if (!resumeQuestionId && answeredCacheRef.current.size >= questions.length) {
+      setStep("done");
+    }
+  }, [questions, resumeQuestionId, step]);
 
   const loadCachedAnswer = (question) => {
     prefillingRef.current = true;
-    const cached = question
-      ? answeredCacheRef.current.get(question.id)
-      : null;
-
-    if (!question || cached == null) {
+    const cachedValue = question ? answeredCacheRef.current.get(question.id) : null;
+    if (!question || cachedValue === undefined) {
       setSelectedOption("");
       setTextAnswer("");
-    } else if (question.options?.some((option) => option.value === cached)) {
-      setSelectedOption(cached);
+    } else if (question.options?.some((opt) => opt.value === cachedValue)) {
+      setSelectedOption(cachedValue);
       setTextAnswer("");
     } else {
-      setTextAnswer(cached);
+      setTextAnswer(cachedValue);
       setSelectedOption("");
     }
     prefillingRef.current = false;
@@ -149,31 +153,15 @@ function App() {
   };
 
   useEffect(() => {
-    if (!questions.length) return;
     const active = questions[currentIndex];
-    if (!active) {
-      setSelectedOption("");
-      setTextAnswer("");
-      setIsDirty(false);
-      return;
-    }
+    if (!active) return;
     loadCachedAnswer(active);
   }, [questions, currentIndex]);
 
-  useEffect(() => {
-    if (step !== "questions" || !questions.length) return;
-    if (answeredCacheRef.current.size >= questions.length) {
-      setStep("done");
-    }
-  }, [questions, step]);
-
-  const handleSignupChange = (field, value) => {
+  const handleSignupChange = (field, value) =>
     setSignupForm((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleLoginChange = (field, value) => {
+  const handleLoginChange = (field, value) =>
     setLoginForm((prev) => ({ ...prev, [field]: value }));
-  };
 
   const handleOptionSelect = (value) => {
     setSelectedOption(value);
@@ -193,33 +181,30 @@ function App() {
     setIsDirty(false);
   };
 
+  const commonSignupPayload = () => ({
+    name: signupForm.name.trim(),
+    password: signupForm.password,
+    age: signupForm.age ? Number(signupForm.age) : null,
+    country: signupForm.country.trim(),
+    delivered_at: signupForm.deliveredAt
+      ? new Date(signupForm.deliveredAt).toISOString()
+      : null,
+  });
+
   const handleSignupSubmit = async (event) => {
     event.preventDefault();
     if (!signupValid) return;
-
     setIsSubmitting(true);
     try {
-      const payload = {
-        name: signupForm.name.trim(),
-        password: signupForm.password,
-        age: signupForm.age ? Number(signupForm.age) : null,
-        country: signupForm.country.trim(),
-        delivered_at: signupForm.deliveredAt
-          ? new Date(signupForm.deliveredAt).toISOString()
-          : null,
-      };
-
       const res = await fetch(`${API_BASE}/api/mothers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(commonSignupPayload()),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.detail || "Unable to create your Majka profile");
-      }
-
+      if (!res.ok) throw new Error(data?.detail || "Unable to create your Majka profile");
       setMotherId(data.mother_id);
+      setMotherName(signupForm.name.trim());
       setResumeQuestionId(null);
       answeredCacheRef.current = new Map();
       setSelectedOption("");
@@ -238,7 +223,6 @@ function App() {
   const handleLoginSubmit = async (event) => {
     event.preventDefault();
     if (!loginValid) return;
-
     setIsSubmitting(true);
     try {
       const res = await fetch(`${API_BASE}/api/auth/login`, {
@@ -250,32 +234,16 @@ function App() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.detail || "Invalid name or password");
-      }
-
+      if (!res.ok) throw new Error(data?.detail || "Invalid name or password");
       setMotherId(data.mother_id);
+      setMotherName(data.profile?.name || loginForm.name.trim());
       const answeredEntries = Object.entries(data.answered_answers || {}).map(
         ([key, value]) => [Number(key), value]
       );
       answeredCacheRef.current = new Map(answeredEntries);
-      const resumeId = data.resume_question_id ?? null;
-      setResumeQuestionId(resumeId);
-      setIsDirty(false);
+      setResumeQuestionId(data.resume_question_id ?? null);
       resetPlanState();
-
-      if (!resumeId && answeredEntries.length && questions.length) {
-        const answeredAll = answeredEntries.length >= questions.length;
-        if (answeredAll) {
-          setStep("done");
-          return;
-        }
-        setCurrentIndex(
-          Math.min(answeredEntries.length, questions.length - 1)
-        );
-      }
-
-      setStep(resumeId ? "questions" : "questions");
+      setStep("questions");
     } catch (err) {
       console.error(err);
       alert(err.message || "Unable to sign in");
@@ -288,9 +256,8 @@ function App() {
     event.preventDefault();
     const activeQuestion = questions[currentIndex];
     if (!motherId || !activeQuestion) return;
-
     const cachedValue = answeredCacheRef.current.get(activeQuestion.id);
-    if (!isDirty && cachedValue) {
+    if (!isDirty && cachedValue !== undefined) {
       if (currentIndex === questions.length - 1) {
         resetPlanState();
         setStep("done");
@@ -317,13 +284,9 @@ function App() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.detail || "Unable to save answer");
-      }
-
+      if (!res.ok) throw new Error(data?.detail || "Unable to save answer");
       answeredCacheRef.current.set(activeQuestion.id, answer);
       setIsDirty(false);
-
       if (currentIndex === questions.length - 1) {
         resetPlanState();
         setStep("done");
@@ -340,15 +303,12 @@ function App() {
 
   const showAuthForm = step === "auth";
   const isFinished = step === "done";
-
   const activeQuestion = questions[currentIndex];
-  const cachedAnswer = activeQuestion
-    ? answeredCacheRef.current.get(activeQuestion.id)
-    : null;
+  const hasOptions = activeQuestion?.options?.length > 0;
 
-  const questionReady = activeQuestion?.options?.length
-    ? Boolean(selectedOption || (!isDirty && cachedAnswer))
-    : Boolean(textAnswer.trim() || (!isDirty && cachedAnswer));
+  const questionReady = hasOptions
+    ? Boolean(selectedOption)
+    : Boolean(textAnswer.trim());
 
   const submitDisabled = showAuthForm
     ? authMode === "signup"
@@ -358,7 +318,7 @@ function App() {
 
   const buttonLabel = showAuthForm
     ? authMode === "signup"
-      ? "Create account"
+      ? "Start Intake"
       : "Sign in"
     : currentIndex === questions.length - 1
       ? "Finish"
@@ -372,18 +332,24 @@ function App() {
       ? `Question ${currentIndex + 1} of ${questions.length}`
       : "No questions available";
 
-  const onSubmit =
-    step === "auth"
-      ? authMode === "signup"
-        ? handleSignupSubmit
-        : handleLoginSubmit
-      : handleAnswerSubmit;
+  const planGreeting =
+    planStructured?.greeting ||
+    (motherName ? `Hello mama ${motherName}, it's Majka here!` : "Hello mama, it's Majka here!");
 
   return (
     <div className="app-container">
       <div className="card-wrapper">
         {!isFinished ? (
-          <form className="uiverse-card" onSubmit={onSubmit}>
+          <form
+            className="uiverse-card"
+            onSubmit={
+              showAuthForm
+                ? authMode === "signup"
+                  ? handleSignupSubmit
+                  : handleLoginSubmit
+                : handleAnswerSubmit
+            }
+          >
             <div className="card-header">
               <span className="chip">
                 {showAuthForm
@@ -523,14 +489,12 @@ function App() {
                     <p className="status-text">Loading questions...</p>
                   ) : fetchError ? (
                     <p className="status-text error">{fetchError}</p>
-                  ) : questions[currentIndex] ? (
+                  ) : activeQuestion ? (
                     <>
-                      <h2 className="question-text">
-                        {questions[currentIndex].text}
-                      </h2>
-                      {questions[currentIndex].options?.length ? (
+                      <h2 className="question-text">{activeQuestion.text}</h2>
+                      {hasOptions ? (
                         <div className="option-list">
-                          {questions[currentIndex].options.map((option) => (
+                          {activeQuestion.options.map((option) => (
                             <label
                               key={option.id}
                               className={`option-card ${
@@ -539,7 +503,7 @@ function App() {
                             >
                               <input
                                 type="radio"
-                                name={`question-${questions[currentIndex].id}`}
+                                name={`question-${activeQuestion.id}`}
                                 value={option.value}
                                 checked={selectedOption === option.value}
                                 onChange={(e) =>
@@ -619,9 +583,42 @@ function App() {
                       Try again
                     </button>
                   </div>
-                ) : plan ? (
+                ) : planStructured ? (
+                  <div className="plan-structured">
+                    <p className="plan-greeting">{planGreeting}</p>
+                    {planStructured.intro && (
+                      <p className="plan-intro">{planStructured.intro}</p>
+                    )}
+                    <div className="plan-cards">
+                      {(planStructured.exercises || []).map((exercise, idx) => (
+                        <div className="exercise-card" key={`exercise-${idx}`}>
+                          <div className="exercise-copy">
+                            <h3>{exercise.title}</h3>
+                            {exercise.summary && <p>{exercise.summary}</p>}
+                            {exercise.why && (
+                              <p className="exercise-meta">
+                                <strong>Why it fits:</strong> {exercise.why}
+                              </p>
+                            )}
+                            {exercise.how && (
+                              <p className="exercise-meta">
+                                <strong>How to try it:</strong> {exercise.how}
+                              </p>
+                            )}
+                          </div>
+                          <button type="button" className="pink-cta">
+                            {exercise.cta_label || "Start Guided Session"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    {planStructured.closing && (
+                      <p className="plan-closing">{planStructured.closing}</p>
+                    )}
+                  </div>
+                ) : planRaw ? (
                   <div className="plan-result">
-                    {plan
+                    {planRaw
                       .split(/\n+/)
                       .filter((para) => para.trim().length)
                       .map((para, idx) => (
@@ -629,9 +626,17 @@ function App() {
                       ))}
                   </div>
                 ) : (
-                  <p className="plan-loading">
-                    We&apos;re preparing your recommendations...
-                  </p>
+                  <div className="plan-placeholder">
+                    <p>We&apos;ll show your personalized flow as soon as it&apos;s ready.</p>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={fetchPlan}
+                      disabled={planLoading}
+                    >
+                      Refresh plan
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

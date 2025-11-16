@@ -1,0 +1,251 @@
+    event.preventDefault();
+    if (!signupValid) return;
+
+    setIsSubmitting(true);
+    try {
+      const payload = {
+        name: signupForm.name.trim(),
+        password: signupForm.password,
+        age: signupForm.age ? Number(signupForm.age) : null,
+        country: signupForm.country.trim(),
+        delivered_at: signupForm.deliveredAt
+          ? new Date(signupForm.deliveredAt).toISOString()
+          : null,
+      };
+
+      const res = await fetch(`${API_BASE}/api/mothers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || "Unable to create your Majka profile");
+      }
+
+      setMotherId(data.mother_id);
+      setMotherName(signupForm.name.trim());
+      setResumeQuestionId(null);
+      answeredCacheRef.current = new Map();
+      setSelectedOption("");
+      setTextAnswer("");
+      setIsDirty(false);
+      resetPlanState();
+      setStep("questions");
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Unable to start intake");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLoginSubmit = async (event) => {
+    event.preventDefault();
+    if (!loginValid) return;
+
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: loginForm.name.trim(),
+          password: loginForm.password,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || "Invalid name or password");
+      }
+
+      setMotherId(data.mother_id);
+      setMotherName(data.profile?.name || loginForm.name.trim());
+      const answeredEntries = Object.entries(data.answered_answers || {}).map(
+        ([key, value]) => [Number(key), value]
+      );
+      answeredCacheRef.current = new Map(answeredEntries);
+
+      const resumeId = data.resume_question_id ?? null;
+      setResumeQuestionId(resumeId);
+      resetPlanState();
+      setStep("questions");
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Unable to sign in");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAnswerSubmit = async (event) => {
+    event.preventDefault();
+    const activeQuestion = questions[currentIndex];
+    if (!motherId || !activeQuestion) return;
+
+    const cachedValue = answeredCacheRef.current.get(activeQuestion.id);
+    if (!isDirty && cachedValue !== undefined) {
+      if (currentIndex === questions.length - 1) {
+        resetPlanState();
+        setStep("done");
+      } else {
+        setCurrentIndex((prev) => prev + 1);
+      }
+      return;
+    }
+
+    const answer = activeQuestion.options?.length
+      ? selectedOption
+      : textAnswer.trim();
+    if (!answer) return;
+
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/answers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mother_id: motherId,
+          question_id: activeQuestion.id,
+          answer,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || "Unable to save answer");
+      }
+
+      answeredCacheRef.current.set(activeQuestion.id, answer);
+      setIsDirty(false);
+
+      if (currentIndex === questions.length - 1) {
+        resetPlanState();
+        setStep("done");
+      } else {
+        setCurrentIndex((prev) => prev + 1);
+      }
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Unable to submit answer");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const showAuthForm = step === "auth";
+  const isFinished = step === "done";
+  const activeQuestion = questions[currentIndex];
+  const cachedAnswer = activeQuestion
+    ? answeredCacheRef.current.get(activeQuestion.id)
+    : null;
+
+  const questionReady = activeQuestion?.options?.length
+    ? Boolean(selectedOption || (!isDirty && cachedAnswer))
+    : Boolean(textAnswer.trim() || (!isDirty && cachedAnswer));
+
+  const submitDisabled = showAuthForm
+    ? authMode === "signup"
+      ? !signupValid || isSubmitting
+      : !loginValid || isSubmitting
+    : isSubmitting || !activeQuestion || !questionReady;
+
+  const buttonLabel = showAuthForm
+    ? authMode === "signup"
+      ? "Start Intake"
+      : "Sign in"
+    : currentIndex === questions.length - 1
+      ? "Finish"
+      : "Next";
+
+  const progressLabel = showAuthForm
+    ? authMode === "signup"
+      ? "Step 1 of 2 · Create your Majka profile"
+      : "Step 1 of 2 · Sign in to Majka"
+    : questions.length
+      ? `Question ${currentIndex + 1} of ${questions.length}`
+      : "No questions available";
+
+  const planGreeting =
+    planStructured?.greeting ||
+    (motherName ? `Hello mama ${motherName}, it's Majka here!` : "Hello mama, it's Majka here!");
+
+  return (
+    <div className="app-container">
+      <div className="card-wrapper">
+        {!isFinished ? (
+          <form
+            className="uiverse-card"
+            onSubmit={
+              showAuthForm
+                ? authMode === "signup"
+                  ? handleSignupSubmit
+                  : handleLoginSubmit
+                : handleAnswerSubmit
+            }
+          >
+            <div className="card-header">
+              <span className="chip">
+                {showAuthForm
+                  ? authMode === "signup"
+                    ? "Join Majka"
+                    : "Welcome back"
+                  : "Majka Intake"}
+              </span>
+            </div>
+            <div className="card-body">
+              {showAuthForm ? (
+                <>
+                  <div className="auth-toggle">
+                    <button
+                      type="button"
+                      className={authMode === "signup" ? "active" : ""}
+                      onClick={() => setAuthMode("signup")}
+                    >
+                      Create account
+                    </button>
+                    <button
+                      type="button"
+                      className={authMode === "login" ? "active" : ""}
+                      onClick={() => setAuthMode("login")}
+                    >
+                      Sign in
+                    </button>
+                  </div>
+                  {authMode === "signup" ? (
+                    <>
+                      <h2 className="question-text">Let&apos;s get to know you</h2>
+                      <div className="form-grid">
+                        <label className="field">
+                          <span>Name</span>
+                          <input
+                            className="text-input"
+                            type="text"
+                            value={signupForm.name}
+                            placeholder="Your name"
+                            onChange={(e) => handleSignupChange("name", e.target.value)}
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Password</span>
+                          <input
+                            className="text-input"
+                            type="password"
+                            value={signupForm.password}
+                            placeholder="Create a password"
+                            onChange={(e) => handleSignupChange("password", e.target.value)}
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Age</span>
+                          <input
+                            className="text-input"
+                            type="number"
+                            min="13"
+                            value={signupForm.age}
+                            placeholder="e.g. 32"
+                            onChange={(e) => handleSignupChange("age", e.target.value)}
+                            required
+                          />
+                        </label>

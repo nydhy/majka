@@ -332,3 +332,75 @@ body {
   flex-direction: column;
   gap: 8px;
 }
+
+.plan-structured {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.plan-greeting {
+  font-weight: 600;
+  color: #5b0d49;
+  margin: 0;
+}
+
+.plan-intro,
+.plan-closing {
+  margin: 0;
+  color: #6d1b52;
+  line-height: 1.45;
+}
+
+.plan-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exercise-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: inset 0 0 0 1px rgba(255, 0, 128, 0.12);
+  flex-wrap: wrap;
+}
+
+.exercise-copy h3 {
+  margin: 0 0 6px;
+  color: #5b0d49;
+}
+
+.exercise-copy p {
+  margin: 4px 0;
+  color: #6f2056;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.exercise-meta {
+  font-size: 13px;
+  color: #7b2a5e;
+}
+
+.pink-cta {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: linear-gradient(135deg, #ff4a9b, #ff79c8);
+  color: #fff;
+  box-shadow: 0 6px 14px rgba(255, 0, 128, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pink-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(255, 0, 128, 0.4);
+}

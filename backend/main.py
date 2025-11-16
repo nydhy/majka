@@ -1,5 +1,7 @@
+import json
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 
 import bcrypt
 import google.generativeai as genai
@@ -46,16 +48,26 @@ MAX_QUESTION_ORDER = int(os.getenv("MAX_QUESTION_ORDER", "18"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 EXERCISES = [
-    "Diaphragmatic breathing with pelvic-floor engagement",
-    "Supine pelvic tilts",
-    "Glute bridges with light band",
-    "Cat-cow spinal mobility",
-    "Side-lying clamshells",
-    "Supported wall sit pulses",
-    "Chair-assisted squats",
-    "Bird-dog holds",
-    "Seated thoracic rotations",
-    "Standing calf raises with support",
+  "Breathing Coach",
+  "Pelvic Floor Coach",
+  "Pelvic Tilt Coach",
+  "Heel Slide Coach",
+  "Glute Bridge Coach",
+  "Walking Coach",
+  "Bodyweight Squat Coach",
+  "Stationary Lunge Coach",
+  "Bird-Dog Coach",
+  "Dead Bug Coach",
+  "Modified Plank Coach",
+  "Bent-Over Row Coach",
+  "Bicep Curl Coach",
+  "Overhead Press Coach",
+  "Goblet Squat Coach",
+  "Weighted Lunge Coach",
+  "Single-Leg Deadlift Coach",
+  "Squat Jump Coach",
+  "Run/Walk Coach",
+  "HIIT Posture Coach"
 ]
 
 if not SUPABASE_URL or not SUPABASE_KEY:
@@ -143,7 +155,29 @@ def _fetch_answer_pairs(mother_id: int):
     return pairs
 
 
-def _build_recommendation_prompt(pairs: list[dict]):
+def _fetch_mother_profile(mother_id: int):
+    resp = (
+        supabase.table(SUPABASE_MOTHERS_TABLE)
+        .select("name,delivered_at")
+        .eq("id", mother_id)
+        .limit(1)
+        .execute()
+    )
+    error = _resp_error(resp)
+    if error:
+        raise HTTPException(status_code=500, detail=str(error))
+    data = _resp_data(resp) or []
+    if not data:
+        raise HTTPException(status_code=404, detail="Mother profile not found")
+    return data[0]
+
+
+def _build_recommendation_prompt(
+    pairs: list[dict],
+    postpartum_weeks: float | None = None,
+    delivered_at_str: str | None = None,
+    mother_name: str | None = None,
+):
     qa_section = "\n".join(
         [
             f"{idx + 1}. Question: {item['question']}\n   Answer: {item['answer']}"
@@ -151,22 +185,61 @@ def _build_recommendation_prompt(pairs: list[dict]):
         ]
     )
     exercise_section = "\n".join(f"- {exercise}" for exercise in EXERCISES)
+    postpartum_text = "Postpartum timing unknown."
+    if delivered_at_str and postpartum_weeks is not None:
+        postpartum_text = (
+            f"Delivery date: {delivered_at_str} "
+            f"(approximately {postpartum_weeks:.1f} weeks postpartum)."
+        )
+    elif postpartum_weeks is not None:
+        postpartum_text = f"Approximately {postpartum_weeks:.1f} weeks postpartum."
+
+    name_for_prompt = mother_name or "mama"
 
     prompt = f"""
-You are Majka, a warm postpartum recovery coach. Using the intake answers below,
-curate a gentle exercise plan using only exercises from the approved list.
+You are Majka, an *expert postpartum physical therapist and coach. Your tone must be consistently **warm, maternal, highly reassuring, and strictly safety-first and accommodative*. Your primary directive is to create a safe, individualized plan based solely on the provided data.
 
-Intake answers:
-{qa_section}
+---
+### I. CRITICAL SAFETY GUARDRAILS
+---
+*GUARDRAIL OVERRIDE (CRITICAL):* You MUST inspect the {qa_section} for high-risk red flags. If the mother reports *Fever, Heavy Bleeding (soaking more than one pad in an hour), Severe/Worsening Incision/Perineal Pain (4/10 or higher), or Pelvic Heaviness/Bulging*, the entire 'exercises' array MUST be empty (i.e., []). The 'intro' must explicitly advise the mother to *stop all activity and contact her healthcare provider immediately.*
 
-Approved exercise library:
-{exercise_section}
+---
+### II. CUSTOMIZATION LOGIC & PRIORITY
+---
+If the Guardrail is NOT active, select exactly 3-4 exercises from the {exercise_section} based on the following priority:
 
-Provide:
-1. A short supportive paragraph acknowledging how the mother is feeling.
-2. 3-4 specific exercises from the list (name + why it fits), ordered from warm-up to main work.
-3. Optional breathing / recovery reminder.
-Keep the tone kind and encouraging. Do not invent exercises outside the list.
+1.  *PHASE 1 (Healing, Weeks 0-5):* If {postpartum_text} indicates *less than 6 weeks, the plan MUST prioritize **Diaphragmatic Breathing* and *Pelvic Tilts* (Foundation moves). Limit cardiovascular work to *Gentle Walking*. AVOID all others.
+2.  *CORE FOCUS (Diastasis Recti/Heaviness):* If {qa_section} notes *Diastasis Recti (DR) or Pelvic Heaviness/Incontinence, the plan MUST include **Kegels* (if weeks > 6) and *Pelvic Tilts. Strictly **AVOID* any moves that cause abdominal doming (like *Modified Planks*).
+3.  *STRENGTH & FITNESS (Weeks 6+):* If {postpartum_weeks} is *6 or greater* and there are *no red flags/pain, you may progress to one or two general strength moves like **Glute Bridges* or *Bodyweight Squats*, adjusting complexity based on the pre-pregnancy fitness level.
+
+---
+### III. THE PLAN GENERATION
+---
+Based on the directives above, create the JSON response.
+
+* *{postpartum_text}*: [Context describing weeks postpartum and delivery type]
+* *{qa_section}*: [Specific answers regarding pain, core issues, and red flags]
+* *{exercise_section}*: [The full library of approved exercises and their descriptions]
+* *name_for_prompt*: [The user's first name]
+
+Respond with valid JSON in this shape:
+{{
+  "greeting": "...",
+  "intro": "...",
+  "exercises": [
+    {{
+      "title": "...",
+      "summary": "one or two sentences about the move",
+      "why": "why it fits the mother right now (must reference intake answers)",
+      "how": "1-2 actionable cues",
+      "cta_label": "Start Guided Session"
+    }}
+  ],
+  "closing": "..."
+}}
+
+Do not include backticks or any explanation outside the JSON.
 """
     return prompt.strip()
 
@@ -389,7 +462,29 @@ def generate_recommendations(payload: RecommendationPayload):
             detail="No answers found for this mother. Please complete the intake first.",
         )
 
-    prompt = _build_recommendation_prompt(pairs)
+    mother_profile = _fetch_mother_profile(payload.mother_id)
+    delivered_at = mother_profile.get("delivered_at")
+    postpartum_weeks = None
+    delivered_label = None
+    if delivered_at:
+        try:
+            delivered_dt = datetime.fromisoformat(delivered_at.replace("Z", "+00:00"))
+            if delivered_dt.tzinfo:
+                delivered_dt = delivered_dt.astimezone(timezone.utc).replace(
+                    tzinfo=None
+                )
+            delivered_label = delivered_dt.strftime("%Y-%m-%d")
+            diff_days = (datetime.utcnow() - delivered_dt).days
+            postpartum_weeks = max(diff_days / 7, 0)
+        except ValueError:
+            delivered_label = delivered_at
+
+    prompt = _build_recommendation_prompt(
+        pairs,
+        postpartum_weeks,
+        delivered_label,
+        mother_profile.get("name"),
+    )
 
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
@@ -400,4 +495,14 @@ def generate_recommendations(payload: RecommendationPayload):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Gemini error: {exc}") from exc
 
-    return {"plan": plan_text}
+    plan_struct = None
+    cleaned = plan_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+    try:
+        plan_struct = json.loads(cleaned)
+    except Exception:
+        plan_struct = None
+
+    return {"plan_text": plan_text, "plan": plan_struct}
