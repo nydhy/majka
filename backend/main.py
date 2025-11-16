@@ -286,7 +286,7 @@ def _fetch_answer_pairs(mother_id: int):
 def _fetch_mother_profile(mother_id: int):
     resp = (
         supabase.table(SUPABASE_MOTHERS_TABLE)
-        .select("name,delivered_at")
+        .select("name,age,country,delivered_at")
         .eq("id", mother_id)
         .limit(1)
         .execute()
@@ -725,3 +725,24 @@ def ask_majka(payload: ChatPayload):
     except Exception as exc:  # pragma: no cover - external API
         raise HTTPException(status_code=500, detail=f"Majka chat error: {exc}") from exc
     return {"answer": answer}
+
+
+@app.get("/api/mothers/{mother_id}/profile")
+def get_mother_profile_detail(mother_id: int):
+    profile = _fetch_mother_profile(mother_id)
+    answers = _fetch_answer_pairs(mother_id)
+    return {"profile": profile, "answers": answers}
+
+
+@app.post("/api/mothers/{mother_id}/retake")
+def reset_mother_answers(mother_id: int):
+    resp = (
+        supabase.table(SUPABASE_ANSWERS_TABLE)
+        .delete()
+        .eq("mother_id", mother_id)
+        .execute()
+    )
+    error = _resp_error(resp)
+    if error:
+        raise HTTPException(status_code=500, detail=str(error))
+    return {"status": "ok"}
