@@ -58,6 +58,8 @@ function App() {
   const [showRetakeConfirm, setShowRetakeConfirm] = useState(false);
   const [deliveredInputType, setDeliveredInputType] = useState("text");
   const [isVoiceBotOpen, setIsVoiceBotOpen] = useState(false);
+  const [isMythOpen, setIsMythOpen] = useState(false);
+  const [mythIndex, setMythIndex] = useState(0);
   const COUNTRY_LIST = useMemo(
     () => [
       "Afghanistan",
@@ -254,6 +256,61 @@ function App() {
       "Yemen",
       "Zambia",
       "Zimbabwe",
+    ],
+    []
+  );
+  const MYTHS = useMemo(
+    () => [
+      {
+        myth: "You should bounce back quickly after birth.",
+        fact:
+          "Healing takes weeks to months—every body is different. Your uterus, pelvic floor, hormones, and heart need time. Forget bounce-back culture.",
+      },
+      {
+        myth: "Postpartum ends after 6 weeks.",
+        fact:
+          "The 6-week checkup just confirms you're healing. Hormones, strength, and emotions shift for 12–18 months.",
+      },
+      {
+        myth: "If you're not breastfeeding, you're failing.",
+        fact:
+          "Fed is best. Formula is healthy, your mental health matters, and you get to choose what's right for you.",
+      },
+      {
+        myth: "Pelvic floor issues are normal—just live with them.",
+        fact:
+          "Leakage, heaviness, or pain are common but not normal. Pelvic PT and gentle exercises can fix most symptoms.",
+      },
+      {
+        myth: "If it's painful, keep pushing through.",
+        fact:
+          "Postpartum exercise is gentle and pain-free. Pain means the body needs rest or support—pause and adjust.",
+      },
+      {
+        myth: "You should love every moment with your newborn.",
+        fact:
+          "It's okay to feel overwhelmed or detached. Postpartum mood shifts affect 1 in 7 mothers and are treatable.",
+      },
+      {
+        myth: "Your stomach will go back to normal quickly.",
+        fact:
+          "Ab separation needs months of careful rehab. Crunches or planks too soon can worsen it; slow core work wins.",
+      },
+      {
+        myth: "Bleeding stops in a few days.",
+        fact:
+          "Lochia lasts 2–6 weeks and changes color. Sudden heavy bleeding is a warning sign—call your doctor.",
+      },
+      {
+        myth: "You can't exercise until your doctor says so.",
+        fact:
+          "Unless you're told otherwise, gentle breathing, walking, and pelvic floor relaxation are safe within 24–48 hours.",
+      },
+      {
+        myth: "As long as the baby is healthy, your feelings don't matter.",
+        fact:
+          "Your health matters too. Supporting mom's body and mind improves outcomes for both of you.",
+      },
     ],
     []
   );
@@ -1104,6 +1161,9 @@ function App() {
                       <button type="button" onClick={() => setIsVoiceBotOpen(true)}>
                         VoiceBot (Majka)
                       </button>
+                      <button type="button" onClick={() => setIsMythOpen(true)}>
+                        Myth Buster
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1220,7 +1280,7 @@ function App() {
               <div className="voice-pulse pulse-2" />
             </div>
             <p className="voicebot-text">
-              Majka is listening. Ask your question when you’re ready.
+              Majka is listening. Ask your question when you're ready.
             </p>
             <button
               type="button"
@@ -1235,8 +1295,49 @@ function App() {
           </div>
         </div>
       )}
+      {isMythOpen && (
+        <div className="profile-overlay">
+          <div className="myth-panel">
+            <button
+              type="button"
+              className="profile-close myth-close"
+              onClick={() => setIsMythOpen(false)}
+            >
+              ×
+            </button>
+            <h3>Majka Myth Buster</h3>
+            <div className="myth-card">
+              <p className="myth-label">Myth</p>
+              <p className="myth-text">{MYTHS[mythIndex].myth}</p>
+              <p className="fact-label">Fact</p>
+              <p className="fact-text">{MYTHS[mythIndex].fact}</p>
+            </div>
+            <div className="myth-controls">
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() =>
+                  setMythIndex((prev) => (prev - 1 + MYTHS.length) % MYTHS.length)
+                }
+              >
+                ← Prev
+              </button>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() =>
+                  setMythIndex((prev) => (prev + 1) % MYTHS.length)
+                }
+              >
+                Next →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 export default App;
+
