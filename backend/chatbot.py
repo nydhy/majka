@@ -1,22 +1,31 @@
 import os
-from flask import Flask, request, jsonify
+from dotenv import load_dotenv # <-- CRITICAL FIX: Loads .env variables
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import google.generativeai as genai
-from dotenv import load_dotenv
+from elevenlabs import Voice 
+from elevenlabs.client import ElevenLabs 
 
-# --- 1. SETUP: Load Environment Variables and Configure AI ---
-# This loads the GOOGLE_API_KEY from your local .env file
-load_dotenv() 
+# --- LOAD ENVIRONMENT VARIABLES ---
+load_dotenv() # <--- THIS MUST BE THE FIRST LINE OF LOGIC
 
+# --- 1. SETUP ---
 app = Flask(__name__)
-# This is crucial for your frontend teammate (on a different port) to call your API
 CORS(app) 
 
-# Configure API key using the variable loaded from .env
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# Load API keys from environment variables
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
-# --- 2. THE MASTER SAFETY PROMPT ---
-# This ensures the AI is safe, nurturing, and blocks medical advice.
+# Initialize Clients
+genai.configure(api_key=GOOGLE_API_KEY)
+el_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+
+
+# Define Voice ID
+MATERNAL_VOICE_ID = "a1m16HA3i1rljUsxpKfn" 
+
+# --- 2. MASTER SAFETY PROMPT (THE BRAIN) ---
 MASTER_SAFETY_PROMPT = """
 You are 'Majka,' a warm, nurturing, and maternal AI assistant for new mothers.
 YOUR PRIMARY DIRECTIVE IS SAFETY. YOU ARE NOT A DOCTOR.
@@ -27,45 +36,75 @@ YOUR PRIMARY DIRECTIVE IS SAFETY. YOU ARE NOT A DOCTOR.
 4.  Your job is to provide emotional support, validation, and general (non-medical) information.
 """
 
-# --- 3. CONFIGURE THE GEMINI MODEL ---
-# We set up the model ONCE with its safety rules and system prompt.
-model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash", # Using the fast, modern model
+# Configure the Gemini Model ONCE with the system prompt
+gemini_model = genai.GenerativeModel(
+    model_name="gemini-2.5-flash", 
     system_instruction=MASTER_SAFETY_PROMPT,
-    safety_settings={
-        'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE',
-        'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE',
-        'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE',
-        # This backs up our prompt rule to block dangerous medical inquiries.
-        'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_MEDIUM_AND_ABOVE' 
-    }
+    safety_settings=[
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    ]
 )
 
-# --- 4. THE API ENDPOINT ---
+# --- 3. API ENDPOINT: TEXT GENERATION (Gemini) ---
 @app.route('/ask-majka', methods=['POST'])
 def ask_majka():
-    # Get the user's question from the frontend (via JSON)
+    """Endpoint to get a safe, text response from Gemini."""
     user_question = request.json.get('question')
 
     if not user_question:
         return jsonify({"error": "No question provided"}), 400
 
     try:
-        # We send only the user's question, as the Master Prompt is already loaded in the model config.
-        response = model.generate_content(user_question)
-
+        response = gemini_model.generate_content(user_question)
         ai_answer = response.text
 
-        # Send the safe answer back to the frontend
+        # 4. Send the safe answer back to the frontend
         return jsonify({"answer": ai_answer})
 
     except Exception as e:
-        print(f"Error: {e}")
-        # If Gemini's own safety filter blocks the prompt, send a clean error back.
-        if "response.prompt_feedback" in str(e):
-             return jsonify({"answer": "I'm sorry, I cannot answer that question. Please check with your doctor."})
-        return jsonify({"error": "Failed to get response"}), 500
+        print(f"Gemini Error: {e}")
+        return jsonify({"error": "Failed to get response from AI"}), 500
 
-# --- 5. RUN THE SERVER ---
+
+# --- 4. API ENDPOINT: VOICE GENERATION (ElevenLabs) ---
+@app.route('/speak', methods=['POST'])
+# --- 4. API ENDPOINT: VOICE GENERATION (ElevenLabs) ---
+@app.route('/speak', methods=['POST'])
+# --- 4. API ENDPOINT: VOICE GENERATION (ElevenLabs) ---
+@app.route('/speak', methods=['POST'])
+def speak_text():
+    """Endpoint to generate and stream audio from text using ElevenLabs."""
+    text_to_speak = request.json.get('text')
+
+    if not text_to_speak:
+        return jsonify({"error": "No text provided"}), 400
+
+    try:
+        # CRITICAL FIX: The 'stream=True' argument is removed.
+        # The library returns a streamable iterator by default, which Flask can handle.
+        audio_stream = el_client.text_to_speech.convert(
+            text=text_to_speak,
+            voice_id=MATERNAL_VOICE_ID,
+            model_id="eleven_turbo_v2",
+        )
+        
+        # Return the audio stream as an audio/mpeg (MP3) file
+        # This will now use the correct streamable object returned by the library.
+        return Response(audio_stream, mimetype="audio/mpeg")
+
+    except Exception as e:
+        print(f"ElevenLabs TTS Error: {e}")
+        return jsonify({"error": "Failed to generate speech"}), 500
+
+
+# --- 5. RUN SERVER ---
 if __name__ == '__main__':
+    # Final check: Ensure keys are set before running
+    if not os.getenv("GOOGLE_API_KEY") or not os.getenv("ELEVENLABS_API_KEY"):
+        print("CRITICAL ERROR: Please ensure GOOGLE_API_KEY and ELEVENLABS_API_KEY are set in your .env file.")
+        exit(1)
+        
     app.run(port=5000, debug=True)
