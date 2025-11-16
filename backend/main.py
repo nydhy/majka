@@ -333,12 +333,11 @@ GUARDRAIL OVERRIDE (CRITICAL): You MUST inspect the {qa_section} for high-risk r
 
 ### II. CUSTOMIZATION LOGIC & PRIORITY (Enhanced for Variety)
 
-If the Guardrail is NOT active, select exactly 4 to 8 exercises from the {exercise_section} based on the following priority:
+If the Guardrail is NOT active, select exactly 6 to 8 exercises from the {exercise_section} based on the following priority:
 
-1.  VARIETY INSTRUCTION: When selecting the final 4 to 8 exercises, and multiple exercises meet the safety criteria, you MUST *prioritize variety. Do not repeat the most recent plan if the request implies the user wants an alternative. Ensure the final selected set is composed of the safest *and most diverse options available.
-2.  PHASE 1 (Healing, Weeks 0-5): If {postpartum_text} indicates less than 6 weeks, the plan MUST prioritize **Diaphragmatic Breathing and Pelvic Tilts (Foundation moves). Limit cardiovascular work to Gentle Walking. AVOID all others.
-3.  CORE FOCUS (Diastasis Recti/Incontinence): If core issues are noted, the plan MUST include Kegels (if weeks > 6) and Pelvic Tilts. Strictly **AVOID any moves that cause abdominal doming.
-4.  STRENGTH & FITNESS (Weeks 6+): If {postpartum_weeks} is 6 or greater and there are no red flags/pain, you may progress to one or two general strength moves like **Glute Bridges or Bodyweight Squats, adjusting complexity based on the pre-pregnancy fitness level.
+1.  VARIETY INSTRUCTION: When selecting the final 6 to 8 exercises, and multiple exercises meet the safety criteria, you MUST *prioritize variety. Do not repeat the most recent plan if the request implies the user wants an alternative. Ensure the final selected set is composed of the safest *and most diverse options available.
+2.  Based on the User's answer in the {qa_section},select the exercise only from {exercise_section} do not hallucinate,  that is safe to do and also which might help to improve their weak areas.
+
 
 ### III. THE PLAN GENERATION
 
@@ -355,7 +354,7 @@ Respond with valid JSON in this shape, using the casual, human tone in all text 
   "intro": "A short, punchy, and genuinely human opening thought about their current recovery status and week.",
   "exercises": [
     {{
-      "title": "...",
+      "title": "Exercise from exercise_section",
       "summary": "one or two punchy, friendly sentences about the move",
       "why": "Why this move is clutch for them right now (in casual, human language, referencing intake answers).",
       "how": "1-2 easy-to-remember, casual cues.",

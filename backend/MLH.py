@@ -84,6 +84,193 @@ def speak(text: str):
 
 
 # ============================================================
+#  BREATHING COACH
+# ============================================================
+class BreathingCoach:
+    """Guided breathing session that calibrates and then guides in real time."""
+
+    def __init__(self, session_duration_sec=120):
+        self.mp_pose = mp.solutions.pose
+        self.pose = self.mp_pose.Pose(
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+        self.app_state = "CALIBRATING"
+        self.breath_state = "Welcome"
+        self.session_duration_sec = session_duration_sec
+        self.session_start_time = None
+        self.session_complete = False
+
+        self.calibration_cycles_goal = 3
+        self.calibration_breaths = []
+        self.inhale_start_time = None
+        self.exhale_start_time = None
+        self.last_calib_state = "Exhale"
+
+        self.inhale_duration = 4.0
+        self.exhale_duration = 6.0
+        self.cycle_duration = self.inhale_duration + self.exhale_duration
+        self.pacer_start_time = None
+
+        self.shoulder_y_prev = 0
+        self.MOVEMENT_THRESHOLD = 0.005
+        self.SHRUG_THRESHOLD = 0.015
+        self.shrug_warning = False
+
+    def _run_calibration_logic(self, movement, current_time):
+        if movement > self.MOVEMENT_THRESHOLD:
+            self.breath_state = "Inhale"
+        elif movement < -self.MOVEMENT_THRESHOLD:
+            self.breath_state = "Exhale"
+
+        if self.breath_state == "Inhale" and self.last_calib_state == "Exhale":
+            if self.exhale_start_time and self.inhale_start_time:
+                inhale_dur = self.exhale_start_time - self.inhale_start_time
+                exhale_dur = current_time - self.exhale_start_time
+                self.calibration_breaths.append((inhale_dur, exhale_dur))
+            self.inhale_start_time = current_time
+            self.last_calib_state = "Inhale"
+        elif self.breath_state == "Exhale" and self.last_calib_state == "Inhale":
+            self.exhale_start_time = current_time
+            self.last_calib_state = "Exhale"
+
+        if len(self.calibration_breaths) >= self.calibration_cycles_goal:
+            self._calculate_pacer()
+            self.app_state = "GUIDING"
+
+    def _calculate_pacer(self):
+        if self.calibration_breaths:
+            inhales = [b[0] for b in self.calibration_breaths]
+            exhales = [b[1] for b in self.calibration_breaths]
+            self.inhale_duration = float(np.clip(np.mean(inhales), 2.0, 10.0))
+            self.exhale_duration = float(np.clip(np.mean(exhales), 2.0, 10.0))
+        self.cycle_duration = self.inhale_duration + self.exhale_duration
+        now = time.time()
+        self.session_start_time = now
+        self.pacer_start_time = now
+
+    def _run_guiding_logic(self, current_time):
+        if not self.pacer_start_time:
+            self.pacer_start_time = current_time
+        elapsed_since_start = current_time - self.pacer_start_time
+        time_in_cycle = elapsed_since_start % self.cycle_duration
+        self.breath_state = (
+            "Inhale" if time_in_cycle < self.inhale_duration else "Exhale"
+        )
+
+    def _check_shrugs(self, movement):
+        self.shrug_warning = movement > self.SHRUG_THRESHOLD
+
+    def process_frame(self, frame):
+        current_time = time.time()
+        frame = cv2.flip(frame, 1)
+        frame_h, frame_w, _ = frame.shape
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.pose.process(rgb)
+
+        if self.session_start_time and not self.session_complete:
+            if current_time - self.session_start_time > self.session_duration_sec:
+                self.session_complete = True
+                self.app_state = "COMPLETE"
+
+        movement = 0.0
+        if results.pose_landmarks and not self.session_complete:
+            landmarks = results.pose_landmarks.landmark
+            shoulder_y = (
+                landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER.value].y
+                + landmarks[self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y
+            ) / 2
+            if self.shoulder_y_prev == 0:
+                self.shoulder_y_prev = shoulder_y
+            movement = self.shoulder_y_prev - shoulder_y
+            self.shoulder_y_prev = shoulder_y
+            self._check_shrugs(movement)
+            if self.app_state == "CALIBRATING":
+                self._run_calibration_logic(movement, current_time)
+            elif self.app_state == "GUIDING":
+                self._run_guiding_logic(current_time)
+        elif not results.pose_landmarks:
+            self.app_state = "CALIBRATING"
+            self.breath_state = "Welcome"
+            self.calibration_breaths = []
+            self.inhale_start_time = None
+            self.exhale_start_time = None
+            self.pacer_start_time = None
+            self.session_start_time = None
+            self.shoulder_y_prev = 0
+
+        return self._draw_ui(frame, frame_h, frame_w)
+
+    def _draw_ui(self, frame, frame_h, frame_w):
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, 0), (frame_w, 90), (60, 60, 60), -1)
+        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+        if self.session_complete:
+            feedback_text = "Great job! Session complete."
+            color = (170, 255, 170)
+        elif self.shrug_warning:
+            feedback_text = "Gently relax your shoulders..."
+            color = (150, 150, 255)
+        elif self.app_state == "CALIBRATING":
+            feedback_text = (
+                f"Breathe normally... (Calibrating {len(self.calibration_breaths)+1}/"
+                f"{self.calibration_cycles_goal})"
+            )
+            color = (255, 255, 180)
+        elif self.app_state == "GUIDING":
+            if self.breath_state == "Inhale":
+                feedback_text = "Inhale..."
+                color = (230, 255, 230)
+            else:
+                feedback_text = "Exhale..."
+                color = (255, 230, 255)
+        else:
+            feedback_text = "Welcome. Please find a relaxed position."
+            color = (255, 255, 255)
+
+        cv2.putText(
+            frame,
+            feedback_text,
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+        if self.session_complete:
+            timer_text = "Time: Complete!"
+        elif self.session_start_time:
+            remaining = max(
+                0, int(self.session_duration_sec - (time.time() - self.session_start_time))
+            )
+            minutes = remaining // 60
+            seconds = remaining % 60
+            timer_text = f"Time: {minutes:02d}:{seconds:02d}"
+        else:
+            minutes = self.session_duration_sec // 60
+            seconds = self.session_duration_sec % 60
+            timer_text = f"Time: {minutes:02d}:{seconds:02d}"
+
+        cv2.putText(
+            frame,
+            timer_text,
+            (frame_w - 180, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return frame
+
+    def close(self):
+        self.pose.close()
+
+
+# ============================================================
 #  GEOMETRY + SCORING
 # ============================================================
 def calculate_angle(a, b, c):
@@ -462,7 +649,7 @@ def eval_hiit(landmarks, shape):
 #  EXERCISE REGISTRY
 # ============================================================
 EXERCISE_REGISTRY = {
-    "breathing": {"label": "Breathing", "fn": eval_breathing},
+    "breathing": {"label": "Breathing Coach", "type": "breathing"},
     "pelvic_floor": {"label": "Pelvic Floor", "fn": eval_pelvic_floor},
     "pelvic_tilt": {"label": "Pelvic Tilt", "fn": eval_pelvic_tilt},
     "heel_slide": {"label": "Heel Slide", "fn": eval_heel_slide},
@@ -516,7 +703,9 @@ def main(selected_exercise: str | None = None):
     exercise_key = (selected_exercise or CURRENT_EXERCISE) or "glute_bridge"
     cfg = EXERCISE_REGISTRY.get(exercise_key, EXERCISE_REGISTRY["glute_bridge"])
     window_title = cfg["label"]
-    evaluator = cfg["fn"]
+    evaluator = cfg.get("fn")
+    is_breathing = cfg.get("type") == "breathing"
+    breathing_coach = BreathingCoach(SESSION_DURATION_SECONDS) if is_breathing else None
 
     with mp_pose.Pose(
         static_image_mode=False,
@@ -533,6 +722,17 @@ def main(selected_exercise: str | None = None):
             ok, frame = cap.read()
             if not ok:
                 break
+
+            if is_breathing and breathing_coach:
+                processed = breathing_coach.process_frame(frame)
+                cv2.imshow(window_title, processed)
+                if (
+                    cv2.getWindowProperty(window_title, cv2.WND_PROP_VISIBLE) < 1
+                    or cv2.waitKey(1) & 0xFF == ord("q")
+                    or breathing_coach.session_complete
+                ):
+                    break
+                continue
 
             frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -638,6 +838,8 @@ def main(selected_exercise: str | None = None):
 
     cap.release()
     cv2.destroyAllWindows()
+    if breathing_coach:
+        breathing_coach.close()
 
 
 if __name__ == "__main__":
