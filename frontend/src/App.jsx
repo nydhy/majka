@@ -3,6 +3,7 @@ import "./App.css";
 import MajkaLogo from "./assets/Majka.png";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const BOT_API_BASE = import.meta.env.VITE_BOT_API_URL || "http://localhost:5000";
 
 const INITIAL_SIGNUP = {
   name: "",
@@ -43,6 +44,11 @@ function App() {
   const [sessionLoadingKey, setSessionLoadingKey] = useState("");
   const [sessionMessage, setSessionMessage] = useState("");
   const [sessionError, setSessionError] = useState("");
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState("");
 
   const signupValid = useMemo(
     () =>
@@ -119,6 +125,50 @@ function App() {
     },
     []
   );
+
+  const handleToggleChat = () => {
+    setIsChatOpen((prev) => !prev);
+    setChatError("");
+    if (!isChatOpen && chatMessages.length === 0) {
+      setChatMessages([
+        {
+          role: "assistant",
+          text: "Hi mama! I’m Majka. Ask me anything about your plan, movement, or how you’re feeling.",
+        },
+      ]);
+    }
+  };
+
+  const handleSendChat = async (event) => {
+    event?.preventDefault();
+    const message = chatInput.trim();
+    if (!message) return;
+    const userMessage = { role: "user", text: message };
+    setChatMessages((prev) => [...prev, userMessage]);
+    setChatInput("");
+    setChatLoading(true);
+    setChatError("");
+    try {
+      const res = await fetch(`${BOT_API_BASE}/ask-majka`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: message }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "Majka couldn't reply right now.");
+      }
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: data.answer || "I'm here for you." },
+      ]);
+    } catch (err) {
+      console.error(err);
+      setChatError(err.message || "Majka couldn't reply right now.");
+    } finally {
+      setChatLoading(false);
+    }
+  };
 
   useEffect(() => {
     const loadQuestions = async () => {
@@ -704,6 +754,60 @@ function App() {
           </div>
         )}
       </div>
+      {isFinished && (
+        <>
+          <button
+            type="button"
+            className="chat-launcher"
+            onClick={handleToggleChat}
+          >
+            {isChatOpen ? "Close Majka Chat" : "Chat with Majka"}
+          </button>
+          {isChatOpen && (
+            <div className="chat-panel">
+              <div className="chat-head">
+                <div>
+                  <p className="chat-title">Ask Majka</p>
+                  <p className="chat-subtitle">Your gentle companion</p>
+                </div>
+                <button
+                  type="button"
+                  className="chat-close"
+                  onClick={handleToggleChat}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="chat-body">
+                {chatMessages.map((msg, idx) => (
+                  <div
+                    key={`chat-${idx}-${msg.role}`}
+                    className={`chat-bubble ${msg.role}`}
+                  >
+                    {msg.text}
+                  </div>
+                ))}
+                {chatLoading && (
+                  <div className="chat-bubble assistant">Typing…</div>
+                )}
+                {chatError && <p className="chat-error">{chatError}</p>}
+              </div>
+              <form className="chat-input-row" onSubmit={handleSendChat}>
+                <input
+                  type="text"
+                  value={chatInput}
+                  placeholder="Ask Majka anything…"
+                  onChange={(e) => setChatInput(e.target.value)}
+                  disabled={chatLoading}
+                />
+                <button type="submit" disabled={chatLoading || !chatInput.trim()}>
+                  Send
+                </button>
+              </form>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
