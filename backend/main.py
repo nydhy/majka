@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import Client, create_client
 from postgrest.exceptions import APIError
+from datetime import datetime, timezone, timedelta
 
 class MotherPayload(BaseModel):
     name: str
@@ -45,7 +46,7 @@ class GuidedSessionPayload(BaseModel):
 
 class ChatPayload(BaseModel):
     question: str
-    mother_id: int | None = None
+    mother_id: int
     mother_name: str | None = None
 
 load_dotenv()
@@ -116,11 +117,14 @@ else:
     raise RuntimeError("GEMINI_API_KEY is required for Majka AI features.")
 
 CHAT_SYSTEM_PROMPT = """
-You are 'Majka,' a warm, nurturing companion for postpartum mothers.
-Your priorities:
-1. Safety first — never give medical advice or diagnoses; direct urgent issues to a doctor or emergency services.
-2. Keep the tone gentle, encouraging, and realistic (like a trusted friend).
-3. Offer emotional support, practical tips, or reminders about the plan only when safe.
+You are 'Majka,' a warm, nurturing, and maternal AI assistant for new mothers.
+YOUR PRIMARY DIRECTIVE IS SAFETY. YOU ARE NOT A DOCTOR.
+
+1.  You MUST NOT give any medical advice, diagnosis, or treatment recommendations.
+2.  If the user's question sounds medical, you MUST gently decline and guide them to a doctor or emergency services'.
+3.  CRITICAL RULE: If a user mentions bleeding, fever, pus, severe headache, dizziness, or suicidal thoughts, you MUST stop. Your ONLY response must be: 'That sounds serious, and your safety is most important. Please stop and call your doctor or 911 immediately.'
+4.  Your job is to provide emotional support, validation, and general (non-medical) information relevant to motherhood and recovery.
+5.  **Topic Restriction:** Restrict all responses to **postpartum recovery, newborn care, and maternity-related** topics. If a user asks about an unrelated topic (e.g., cooking, historical events, coding, current events), you MUST gently redirect them. Explain that your focus is on supporting new mothers and suggest them use a general LLM/chatbot for that specific request.
 """
 
 CHAT_SAFETY_SETTINGS = [
@@ -672,43 +676,42 @@ def start_guided_session(payload: GuidedSessionPayload):
 
 @app.post("/ask-majka")
 def ask_majka(payload: ChatPayload):
-    """Endpoint to get a safe, text response from Gemini (LLM) using user context."""
-    message = (payload.question or "").strip()
-    if not message:
+    """
+    Endpoint to get a safe, contextual text response from Gemini (LLM).
+    
+    Fetches all intake data, summarizes it, and injects it into the prompt.
+    """
+    
+    if not payload.question:
         raise HTTPException(status_code=400, detail="Please provide a question for Majka.")
     
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured.")
 
-    # 1. Retrieve User Data and Calculate Age.
-    # This call will raise HTTPException 404 or 5xx on failure.
-    user_data = get_user_data_and_age(payload.mother_id)
-    
-    # 2. Construct Contextual Prompt
-    context_prefix = (
-        f"The user is named {user_data['user_name']}, and their baby is approximately "
-        f"{user_data['baby_age_weeks']} weeks old. Use this context to personalize your response "
-        f"(e.g., refer to the user's name and the baby's age). "
-    )
-    full_prompt = context_prefix + payload.question
-
     try:
-        # Call the Gemini model for the text response
+        # 1. Retrieve and Build Full Context (Profile + QA Answers)
+        full_context_string, user_data = _build_chat_context(payload.mother_id)
+        
+        # 2. Construct Final Prompt
+        full_prompt = full_context_string + "\n\nUser's Current Question: " + payload.question
+
+        # 3. Call the Gemini model for the text response
         response = chat_model.generate_content(full_prompt)
         ai_answer = (response.text or "I'm here for you, mama.").strip()
 
-        # 3. Send the answer and user data back
+        # 4. Send the answer and basic user data back
         return {"answer": ai_answer, "user_data": user_data}
 
+    except HTTPException:
+        # Re-raise explicit HTTP exceptions (e.g., 400, 404, 500 DB errors)
+        raise
     except Exception as exc:
-        # This catches any remaining exceptions, including Gemini errors.
-        print(f"Gemini Error: {exc}")
-        # Raise an HTTPException, the FastAPI way
+        # Catch unexpected errors (e.g., Gemini service failure)
+        print(f"Gemini Error for mother {payload.mother_id}: {exc}")
         raise HTTPException(
             status_code=500, 
             detail="Failed to get response from AI"
         )
-
 
 def get_user_data_and_age(mother_id: int):
     """
@@ -807,3 +810,68 @@ def get_user_data_and_age(mother_id: int):
         # Catch other unexpected errors
         print(f"General database error for ID {mother_id_int}: {e}")
         raise HTTPException(status_code=500, detail="An unexpected error occurred during data retrieval.")
+    
+def _build_chat_context(mother_id: int) -> tuple[str, dict]:
+    """
+    Fetches mother profile and all intake answers, formats them for the LLM.
+
+    Returns: (context_string, user_data_dict)
+    """
+    if mother_id is None:
+        raise HTTPException(status_code=400, detail="Missing mother ID for personalized chat.")
+    
+    try:
+        # These utility functions are assumed to be present and working:
+        mother_profile = _fetch_mother_profile(mother_id) 
+        qa_pairs = _fetch_answer_pairs(mother_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database retrieval error: {e}")
+
+    # 1. Calculate Postpartum Age
+    delivered_at_str = mother_profile.get("delivered_at")
+    postpartum_weeks = 0
+    
+    if delivered_at_str:
+        try:
+            delivered_dt = datetime.fromisoformat(delivered_at_str.replace("Z", "+00:00"))
+            delivered_dt_utc = delivered_dt.astimezone(timezone.utc)
+            
+            now_utc = datetime.now(timezone.utc)
+            time_difference: timedelta = now_utc - delivered_dt_utc
+            postpartum_weeks = max(0, round(time_difference.days / 7))
+        except ValueError:
+            pass # Age remains 0 if date is unparseable
+
+    # 2. Format QA Pairs Summary
+    qa_summary = "\n".join(
+        [
+            f"Q: {pair['question']} A: {pair['answer']}"
+            for pair in qa_pairs
+        ]
+    )
+
+    # 3. Construct the Context String for the LLM
+    context_prefix = (
+        f"The user's name is **{mother_profile.get('name', 'mama')}** and their baby is approximately "
+        f"**{postpartum_weeks} weeks old**. Use this information to personalize your response. "
+    )
+    
+    context_intake = (
+        "\n\nTheir intake answers provide further context on their recovery status:\n"
+        "--- START INTAKE DATA ---\n"
+        f"{qa_summary}"
+        "\n--- END INTAKE DATA ---\n"
+        "Reference this intake data to provide highly relevant and safe advice. For example, "
+        "if they mention a high pain score or heavy bleeding in the intake, use the CRITICAL RULE "
+        "even if the current question is benign. Prioritize safety based on the most severe answer found."
+    )
+    
+    user_data = {
+        "user_name": mother_profile.get('name'),
+        "baby_age_weeks": postpartum_weeks,
+        "intake_questions_answered": len(qa_pairs),
+    }
+
+    return context_prefix + context_intake, user_data
