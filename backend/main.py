@@ -14,6 +14,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import Client, create_client
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, status
+from fastapi.responses import StreamingResponse
+from elevenlabs.client import ElevenLabs
+
 
 
 class MotherPayload(BaseModel):
@@ -60,6 +64,8 @@ SUPABASE_ANSWERS_TABLE = os.getenv("SUPABASE_ANSWERS_TABLE", "answers")
 SUPABASE_OPTIONS_TABLE = os.getenv("SUPABASE_OPTIONS_TABLE", "question_options")
 MAX_QUESTION_ORDER = int(os.getenv("MAX_QUESTION_ORDER", "18"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+
 
 EXERCISES = [
     {"key": "breathing", "label": "Breathing"},
@@ -114,6 +120,13 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 else:
     raise RuntimeError("GEMINI_API_KEY is required for Majka AI features.")
+
+if not ELEVENLABS_API_KEY:
+    raise RuntimeError("ELEVENLABS_API_KEY is required for voice features.")
+
+# Initialize ElevenLabs client
+elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+
 
 CHAT_SYSTEM_PROMPT = """
 You are 'Majka,' a warm, nurturing companion for postpartum mothers.
@@ -746,3 +759,54 @@ def reset_mother_answers(mother_id: int):
     if error:
         raise HTTPException(status_code=500, detail=str(error))
     return {"status": "ok"}
+
+# --- Voicebot Endpoint ---
+
+
+@app.post("/api/voice/chat")
+async def handle_voice_chat(
+    audio: UploadFile = File(...),
+    prompt: str = Form(...),  # Using form data for the transcribed text until STT is implemented
+    voice_id: str = Form("a1m16HA3i1rljUsxpKfn"),  # Optional voice_id from client
+    mother_name: str | None = Form(None),
+):
+    """
+    Handles a voice chat interaction:
+    1. Receives audio and a transcribed prompt.
+    2. Gets a text response from the existing chat logic (`ask_majka`).
+    3. Converts the text response back to audio using ElevenLabs.
+    4. Streams the audio back to the client.
+    """
+    user_text = (prompt or "").strip()
+    if not user_text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Prompt cannot be empty."
+        )
+
+    # Reuse existing chat logic
+    bot_response_text = ""
+    try:
+        name_for_prompt = (mother_name or "mama").strip()
+        prefixed_question = f"{name_for_prompt} asks: {user_text}"
+        response = chat_model.generate_content(prefixed_question)
+        bot_response_text = (response.text or "I'm here for you, mama.").strip()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Majka chat error: {exc}") from exc
+
+    if not bot_response_text:
+        raise HTTPException(
+            status_code=500, detail="Received an empty response from the chat model."
+        )
+
+    # Convert the text response to speech and stream it
+    try:
+        audio_stream = elevenlabs_client.generate(
+            text=bot_response_text, voice=voice_id, stream=True
+        )
+        return StreamingResponse(audio_stream, media_type="audio/mpeg")
+    except Exception as e:
+        print(f"Error in ElevenLabs TTS generation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate voice response.",
+        )
