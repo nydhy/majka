@@ -333,8 +333,9 @@ function App() {
       : "No questions available";
 
   const planGreeting =
-    planStructured?.greeting ||
-    (motherName ? `Hello mama ${motherName}, it's Majka here!` : "Hello mama, it's Majka here!");
+    (planStructured?.greeting ||
+      (motherName ? `Hello mama ${motherName}, it's Majka here!` : "Hello mama, it's Majka here!")) +
+    "💗";
 
   return (
     <div className="app-container">
@@ -557,10 +558,6 @@ function App() {
         ) : (
           <div className="uiverse-card">
             <div className="card-body">
-              <h2 className="question-text">Thank you from Majka 💗</h2>
-              <p className="thankyou-text">
-                Your profile and answers are saved. Here&apos;s your gentle plan:
-              </p>
               <div className="plan-section">
                 {planLoading ? (
                   <div className="plan-loading">

@@ -333,16 +333,29 @@ body {
   gap: 8px;
 }
 
+.plan-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-family: inherit;
+  text-align: left;
+}
+
 .plan-structured {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  font-family: inherit;
+  text-align: left;
 }
 
 .plan-greeting {
-  font-weight: 600;
+  font-weight: 700;
   color: #5b0d49;
   margin: 0;
+  font-family: inherit;
+  font-size: 22px;
+  line-height: 1.2;
 }
 
 .plan-intro,
@@ -350,6 +363,8 @@ body {
   margin: 0;
   color: #6d1b52;
   line-height: 1.45;
+  font-family: inherit;
+  text-align: left;
 }
 
 .plan-cards {
