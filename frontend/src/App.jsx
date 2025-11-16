@@ -760,8 +760,9 @@ function App() {
             type="button"
             className="chat-launcher"
             onClick={handleToggleChat}
+            aria-label={isChatOpen ? "Close Majka Chat" : "Chat with Majka"}
           >
-            {isChatOpen ? "Close Majka Chat" : "Chat with Majka"}
+            <img src={MajkaLogo} alt="" className="chat-launcher__logo" />
           </button>
           {isChatOpen && (
             <div className="chat-panel">
