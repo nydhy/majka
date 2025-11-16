@@ -175,9 +175,17 @@ function App() {
     if (!question || cachedValue === undefined) {
       setSelectedOption("");
       setTextAnswer("");
-    } else if (question.options?.some((opt) => opt.value === cachedValue)) {
-      setSelectedOption(cachedValue);
-      setTextAnswer("");
+    } else if (question.options?.length) {
+      const matchedOption = question.options.find(
+        (opt) => opt.value === cachedValue || opt.label === cachedValue
+      );
+      if (matchedOption) {
+        setSelectedOption(matchedOption.value);
+        setTextAnswer("");
+      } else {
+        setTextAnswer(cachedValue);
+        setSelectedOption("");
+      }
     } else {
       setTextAnswer(cachedValue);
       setSelectedOption("");
@@ -301,9 +309,13 @@ function App() {
       return;
     }
 
-    const answer = activeQuestion.options?.length
-      ? selectedOption
-      : textAnswer.trim();
+    let answer = textAnswer.trim();
+    if (activeQuestion.options?.length) {
+      const matchedOption = activeQuestion.options.find(
+        (opt) => opt.value === selectedOption || opt.label === selectedOption
+      );
+      answer = matchedOption ? matchedOption.label : "";
+    }
     if (!answer) return;
 
     setIsSubmitting(true);

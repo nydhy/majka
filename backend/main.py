@@ -173,6 +173,40 @@ def _resolve_exercise_key(name: str | None) -> str:
     )
 
 
+def _build_option_lookup(question_ids: list[int]) -> dict[int, dict[str, str]]:
+    if not question_ids:
+        return {}
+    resp = (
+        supabase.table(SUPABASE_OPTIONS_TABLE)
+        .select("question_id,value,label")
+        .in_("question_id", question_ids)
+        .execute()
+    )
+    error = _resp_error(resp)
+    if error:
+        raise HTTPException(status_code=500, detail=str(error))
+    lookup: dict[int, dict[str, str]] = {}
+    for option in _resp_data(resp) or []:
+        qid = option["question_id"]
+        lookup.setdefault(qid, {})[option["value"]] = option["label"]
+    return lookup
+
+
+def _map_answer_text(
+    question_id: int, answer_text: str, option_lookup: dict[int, dict[str, str]]
+) -> str:
+    if not answer_text:
+        return answer_text
+    options = option_lookup.get(question_id, {})
+    label = options.get(answer_text)
+    if label:
+        return label
+    # already label?
+    if answer_text in options.values():
+        return answer_text
+    return answer_text
+
+
 def _fetch_answer_pairs(mother_id: int):
     questions_resp = (
         supabase.table(SUPABASE_QUESTIONS_TABLE)
@@ -189,6 +223,9 @@ def _fetch_answer_pairs(mother_id: int):
     questions = _resp_data(questions_resp) or []
     question_map = {q["id"]: q for q in questions}
 
+    question_ids = [q["id"] for q in questions]
+    option_lookup = _build_option_lookup(question_ids)
+
     answers_resp = (
         supabase.table(SUPABASE_ANSWERS_TABLE)
         .select("question_id,answer_text")
@@ -204,7 +241,8 @@ def _fetch_answer_pairs(mother_id: int):
 
     pairs = []
     for question in questions:
-        answer = answer_map.get(question["id"])
+        raw_answer = answer_map.get(question["id"])
+        answer = _map_answer_text(question["id"], raw_answer or "", option_lookup)
         if answer:
             pairs.append(
                 {
@@ -258,31 +296,31 @@ def _build_recommendation_prompt(
     name_for_prompt = mother_name or "mama"
 
     prompt = f"""
-You're Majka, your super cool and honest postpartum coach (think: best friend who knows all the science). Your tone needs to be *real, casual, and genuinely warm. You must always prioritize **safety first*, but sound like a human, no flowery language, no robotic therapist jargon, and use contractions.
+You're Majka, your super cool and honest postpartum coach (think: best friend who knows all the science). Your tone needs to be real, casual, and genuinely warm. You must always prioritize **safety first, but sound like a human, no flowery language, no robotic therapist jargon, and use contractions.
 
 ### I. CRITICAL SAFETY GUARDRAILS
 
-*GUARDRAIL OVERRIDE (CRITICAL):* You MUST inspect the {qa_section} for high-risk red flags. If the mother reports *Fever, Heavy Bleeding (soaking more than one pad in an hour), Severe/Worsening Incision/Perineal Pain (4/10 or higher), or Pelvic Heaviness/Bulging*, the entire 'exercises' array MUST be empty (i.e., []). The 'intro' must explicitly advise the mother to *stop everything right now* and contact her healthcare provider immediately.
+GUARDRAIL OVERRIDE (CRITICAL): You MUST inspect the {qa_section} for high-risk red flags. If the mother reports Fever, Heavy Bleeding (soaking more than one pad in an hour), Severe/Worsening Incision/Perineal Pain (4/10 or higher), or Pelvic Heaviness/Bulging, the entire 'exercises' array MUST be empty (i.e., []). The 'intro' must explicitly advise the mother to stop everything right now and contact her healthcare provider immediately.
 
 ### II. CUSTOMIZATION LOGIC & PRIORITY (Enhanced for Variety)
 
 If the Guardrail is NOT active, select exactly 4 to 8 exercises from the {exercise_section} based on the following priority:
 
-1.  *VARIETY INSTRUCTION:* When selecting the final 4 to 8 exercises, and multiple exercises meet the safety criteria, you MUST *prioritize variety. Do not repeat the most recent plan if the request implies the user wants an alternative. Ensure the final selected set is composed of the safest *and most diverse options available.
-2.  *PHASE 1 (Healing, Weeks 0-5):* If {postpartum_text} indicates *less than 6 weeks, the plan MUST prioritize **Diaphragmatic Breathing* and *Pelvic Tilts* (Foundation moves). Limit cardiovascular work to *Gentle Walking*. AVOID all others.
-3.  *CORE FOCUS (Diastasis Recti/Incontinence):* If core issues are noted, the plan MUST include *Kegels* (if weeks > 6) and *Pelvic Tilts. Strictly **AVOID* any moves that cause abdominal doming.
-4.  *STRENGTH & FITNESS (Weeks 6+):* If {postpartum_weeks} is *6 or greater* and there are *no red flags/pain, you may progress to one or two general strength moves like **Glute Bridges* or *Bodyweight Squats*, adjusting complexity based on the pre-pregnancy fitness level.
+1.  VARIETY INSTRUCTION: When selecting the final 4 to 8 exercises, and multiple exercises meet the safety criteria, you MUST *prioritize variety. Do not repeat the most recent plan if the request implies the user wants an alternative. Ensure the final selected set is composed of the safest *and most diverse options available.
+2.  PHASE 1 (Healing, Weeks 0-5): If {postpartum_text} indicates less than 6 weeks, the plan MUST prioritize **Diaphragmatic Breathing and Pelvic Tilts (Foundation moves). Limit cardiovascular work to Gentle Walking. AVOID all others.
+3.  CORE FOCUS (Diastasis Recti/Incontinence): If core issues are noted, the plan MUST include Kegels (if weeks > 6) and Pelvic Tilts. Strictly **AVOID any moves that cause abdominal doming.
+4.  STRENGTH & FITNESS (Weeks 6+): If {postpartum_weeks} is 6 or greater and there are no red flags/pain, you may progress to one or two general strength moves like **Glute Bridges or Bodyweight Squats, adjusting complexity based on the pre-pregnancy fitness level.
 
 ### III. THE PLAN GENERATION
 
 Based on the directives above, create the JSON response.
 
-* *{postpartum_text}*: [Context describing weeks postpartum and delivery type]
-* *{qa_section}*: [Specific answers regarding pain, core issues, and red flags]
-* *{exercise_section}*: [The full library of approved exercises and their descriptions]
-* *{name_for_prompt}*: [The user's first name]
+* {postpartum_text}: [Context describing weeks postpartum and delivery type]
+* {qa_section}: [Specific answers regarding pain, core issues, and red flags]
+* {exercise_section}: [The full library of approved exercises and their descriptions]
+* name_for_prompt: [The user's first name]
 
-Respond with valid JSON in this shape, using the *casual, human tone* in all text fields:
+Respond with valid JSON in this shape, using the casual, human tone in all text fields:
 {{
   "greeting": "Hello mama {name_for_prompt}, it's Majka here!",
   "intro": "A short, punchy, and genuinely human opening thought about their current recovery status and week.",
@@ -300,6 +338,9 @@ Respond with valid JSON in this shape, using the *casual, human tone* in all tex
 
 Do not include backticks or any explanation outside the JSON.
 """
+    print(prompt)
+    with open("prompt.txt", "w") as text_file:
+        text_file.write(prompt)
     return prompt.strip()
 
 
@@ -486,10 +527,15 @@ def save_answer(payload: AnswerPayload):
     if cleanup_error:
         raise HTTPException(status_code=500, detail=str(cleanup_error))
 
+    option_lookup = _build_option_lookup([payload.question_id])
+    normalized_answer = _map_answer_text(
+        payload.question_id, payload.answer, option_lookup
+    )
+
     record = {
         "mother_id": payload.mother_id,
         "question_id": payload.question_id,
-        "answer_text": payload.answer,
+        "answer_text": normalized_answer,
         "created_at": now,
     }
 
