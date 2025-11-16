@@ -1,7 +1,11 @@
+import difflib
 import json
 import os
 import re
+import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import bcrypt
 import google.generativeai as genai
@@ -34,6 +38,10 @@ class AnswerPayload(BaseModel):
 class RecommendationPayload(BaseModel):
     mother_id: int
 
+
+class GuidedSessionPayload(BaseModel):
+    exercise: str
+
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -48,27 +56,47 @@ MAX_QUESTION_ORDER = int(os.getenv("MAX_QUESTION_ORDER", "18"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 EXERCISES = [
-  "Breathing",
-  "Pelvic Floor",
-  "Pelvic Tilt",
-  "Heel Slide",
-  "Glute Bridge",
-  "Walking",
-  "Bodyweight Squat",
-  "Stationary Lunge",
-  "Bird-Dog",
-  "Dead Bug",
-  "Modified Plank",
-  "Bent-Over Row",
-  "Bicep Curl",
-  "Overhead Press",
-  "Goblet Squat",
-  "Weighted Lunge",
-  "Single-Leg Deadlift",
-  "Squat Jump",
-  "Run/Walk",
-  "HIIT Posture"
+    {"key": "breathing", "label": "Breathing"},
+    {"key": "pelvic_floor", "label": "Pelvic Floor"},
+    {"key": "pelvic_tilt", "label": "Pelvic Tilt", "aliases": ["Pelvic Tilts"]},
+    {"key": "heel_slide", "label": "Heel Slide", "aliases": ["Heel Slides"]},
+    {"key": "glute_bridge", "label": "Glute Bridge", "aliases": ["Glute Bridges"]},
+    {"key": "walking", "label": "Walking", "aliases": ["Gentle Walk"]},
+    {"key": "bodyweight_squat", "label": "Bodyweight Squat", "aliases": ["Bodyweight Squats"]},
+    {"key": "stationary_lunge", "label": "Stationary Lunge", "aliases": ["Stationary Lunges"]},
+    {"key": "bird_dog", "label": "Bird-Dog", "aliases": ["Bird Dog", "Bird Dogs"]},
+    {"key": "dead_bug", "label": "Dead Bug", "aliases": ["Dead Bugs"]},
+    {"key": "modified_plank", "label": "Modified Plank", "aliases": ["Modified Planks"]},
+    {"key": "bent_over_row", "label": "Bent-Over Row", "aliases": ["Bent Over Row", "Bent Over Rows"]},
+    {"key": "bicep_curl", "label": "Bicep Curl", "aliases": ["Bicep Curls"]},
+    {"key": "overhead_press", "label": "Overhead Press", "aliases": ["Overhead Presses"]},
+    {"key": "goblet_squat", "label": "Goblet Squat", "aliases": ["Goblet Squats"]},
+    {"key": "weighted_lunge", "label": "Weighted Lunge", "aliases": ["Weighted Lunges"]},
+    {"key": "single_leg_deadlift", "label": "Single-Leg Deadlift", "aliases": ["Single Leg Deadlift"]},
+    {"key": "squat_jump", "label": "Squat Jump", "aliases": ["Squat Jumps"]},
+    {"key": "run_intervals", "label": "Run/Walk", "aliases": ["Run Walk", "Intervals"]},
+    {"key": "hiit", "label": "HIIT Posture", "aliases": ["HIIT"]},
 ]
+
+
+def _normalize_exercise_label(value: str | None) -> str:
+    if not value:
+        return ""
+    lowered = value.strip().lower()
+    lowered = re.sub(r"[^a-z0-9]+", "_", lowered)
+    return re.sub(r"_+", "_", lowered).strip("_")
+
+
+EXERCISE_LOOKUP = {}
+for entry in EXERCISES:
+    key = entry["key"]
+    label = entry["label"]
+    EXERCISE_LOOKUP[key] = key
+    EXERCISE_LOOKUP[_normalize_exercise_label(label)] = key
+    for alias in entry.get("aliases", []):
+        normalized = _normalize_exercise_label(alias)
+        if normalized:
+            EXERCISE_LOOKUP[normalized] = key
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError(
@@ -110,6 +138,39 @@ def _verify_password(password: str, hashed: str | None) -> bool:
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
     except ValueError:
         return False
+
+
+def _resolve_exercise_key(name: str | None) -> str:
+    if not name:
+        raise HTTPException(status_code=400, detail="Exercise name is required.")
+    normalized = _normalize_exercise_label(name)
+
+    def _try_lookup(value: str) -> str | None:
+        if value in EXERCISE_LOOKUP:
+            return EXERCISE_LOOKUP[value]
+        return None
+
+    candidates = [normalized]
+    if normalized.endswith("es"):
+        candidates.append(normalized[:-2])
+    if normalized.endswith("s"):
+        candidates.append(normalized[:-1])
+
+    for cand in candidates:
+        resolved = _try_lookup(cand)
+        if resolved:
+            return resolved
+
+    matches = difflib.get_close_matches(
+        normalized, list(EXERCISE_LOOKUP.keys()), n=1, cutoff=0.75
+    )
+    if matches:
+        return EXERCISE_LOOKUP[matches[0]]
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"Exercise '{name}' is not available for guided sessions.",
+    )
 
 
 def _fetch_answer_pairs(mother_id: int):
@@ -184,7 +245,7 @@ def _build_recommendation_prompt(
             for idx, item in enumerate(pairs)
         ]
     )
-    exercise_section = "\n".join(f"- {exercise}" for exercise in EXERCISES)
+    exercise_section = "\n".join(f"- {exercise['label']}" for exercise in EXERCISES)
     postpartum_text = "Postpartum timing unknown."
     if delivered_at_str and postpartum_weeks is not None:
         postpartum_text = (
@@ -504,3 +565,32 @@ def generate_recommendations(payload: RecommendationPayload):
         plan_struct = None
 
     return {"plan_text": plan_text, "plan": plan_struct}
+
+
+@app.post("/api/guided-session")
+def start_guided_session(payload: GuidedSessionPayload):
+    exercise_key = _resolve_exercise_key(payload.exercise)
+    script_path = Path(__file__).with_name("MLH.py")
+    if not script_path.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="MLH.py script is missing on the server.",
+        )
+    try:
+        subprocess.Popen(
+            [sys.executable, str(script_path), "--exercise", exercise_key],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except Exception as exc:  # pragma: no cover - best effort launch
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to launch guided session: {exc}",
+        ) from exc
+
+    return {
+        "status": "launching",
+        "exercise": exercise_key,
+    }

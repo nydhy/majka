@@ -39,6 +39,9 @@ function App() {
   const [planError, setPlanError] = useState("");
   const [planLoading, setPlanLoading] = useState(false);
   const [planRequested, setPlanRequested] = useState(false);
+  const [sessionLoadingKey, setSessionLoadingKey] = useState("");
+  const [sessionMessage, setSessionMessage] = useState("");
+  const [sessionError, setSessionError] = useState("");
 
   const signupValid = useMemo(
     () =>
@@ -85,6 +88,36 @@ function App() {
       setPlanLoading(false);
     }
   }, [motherId]);
+
+  const handleStartGuidedSession = useCallback(
+    async (exercise) => {
+      const title = exercise?.title;
+      if (!title) return;
+      setSessionError("");
+      setSessionMessage("");
+      setSessionLoadingKey(title);
+      try {
+        const res = await fetch(`${API_BASE}/api/guided-session`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ exercise: title }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.detail || "Unable to launch guided session");
+        }
+        setSessionMessage(
+          "Launching your Majka guided session window. Keep your webcam on!"
+        );
+      } catch (err) {
+        console.error(err);
+        setSessionError(err.message || "Unable to launch guided session");
+      } finally {
+        setSessionLoadingKey("");
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     const loadQuestions = async () => {
@@ -559,6 +592,12 @@ function App() {
           <div className="uiverse-card">
             <div className="card-body">
               <div className="plan-section">
+                {sessionMessage && (
+                  <p className="session-feedback success">{sessionMessage}</p>
+                )}
+                {sessionError && (
+                  <p className="session-feedback error">{sessionError}</p>
+                )}
                 {planLoading ? (
                   <div className="plan-loading">
                     <p>Crafting your personalized flow...</p>
@@ -603,8 +642,15 @@ function App() {
                               </p>
                             )}
                           </div>
-                          <button type="button" className="pink-cta">
-                            {exercise.cta_label || "Start Guided Session"}
+                          <button
+                            type="button"
+                            className="pink-cta"
+                            onClick={() => handleStartGuidedSession(exercise)}
+                            disabled={sessionLoadingKey === exercise.title}
+                          >
+                            {sessionLoadingKey === exercise.title
+                              ? "Launching..."
+                              : exercise.cta_label || "Start Guided Session"}
                           </button>
                         </div>
                       ))}
