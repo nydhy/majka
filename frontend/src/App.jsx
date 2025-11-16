@@ -57,6 +57,7 @@ function App() {
   const [profileError, setProfileError] = useState("");
   const [showRetakeConfirm, setShowRetakeConfirm] = useState(false);
   const [deliveredInputType, setDeliveredInputType] = useState("text");
+  const [isVoiceBotOpen, setIsVoiceBotOpen] = useState(false);
   const COUNTRY_LIST = useMemo(
     () => [
       "Afghanistan",
@@ -1097,13 +1098,16 @@ function App() {
               <button type="button" onClick={handleOpenProfile}>
                 Profile
               </button>
-              <button type="button" onClick={handleRetakeEvaluation}>
-                Retake Evaluation
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+                      <button type="button" onClick={handleRetakeEvaluation}>
+                        Retake Evaluation
+                      </button>
+                      <button type="button" onClick={() => setIsVoiceBotOpen(true)}>
+                        VoiceBot (Majka)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
       {isProfileOpen && (
         <div className="profile-overlay">
           <div className="profile-panel">
@@ -1197,6 +1201,37 @@ function App() {
                 Proceed
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {isVoiceBotOpen && (
+        <div className="profile-overlay">
+          <div className="voicebot-panel">
+            <button
+              type="button"
+              className="profile-close voicebot-close"
+              onClick={() => setIsVoiceBotOpen(false)}
+            >
+              ×
+            </button>
+            <div className="voice-logo">
+              <img src={MajkaLogo} alt="Majka voicebot" />
+              <div className="voice-pulse pulse-1" />
+              <div className="voice-pulse pulse-2" />
+            </div>
+            <p className="voicebot-text">
+              Majka is listening. Ask your question when you’re ready.
+            </p>
+            <button
+              type="button"
+              className="retake-proceed"
+              onClick={async () => {
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+                alert("VoiceBot is still under development, stay tuned!");
+              }}
+            >
+              Start VoiceBot
+            </button>
           </div>
         </div>
       )}
