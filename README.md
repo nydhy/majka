@@ -14,7 +14,7 @@ Majka is a full-stack companion app that helps new mothers rebuild strength, tra
 | Frontend | React 19 + Vite, CSS modules |
 | Backend API | FastAPI, Supabase client, Google Generative AI |
 | Guided Sessions | OpenCV + MediaPipe (`MLH.py`) |
-| Chatbot API | Flask, Gemini, ElevenLabs TTS |
+| Chatbot API | FastAPI, Gemini (optional ElevenLabs TTS) |
 
 ## Getting Started
 ### 1. Install Dependencies
@@ -32,24 +32,21 @@ Create `backend/.env`:
 SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
 GEMINI_API_KEY=...
-GOOGLE_API_KEY=...         # for bot.py
-ELEVENLABS_API_KEY=...     # for bot.py
+GOOGLE_API_KEY=...         # for Majka chatbot (falls back to GEMINI_API_KEY)
+ELEVENLABS_API_KEY=...     # optional if you plan to enable TTS later
 MAX_QUESTION_ORDER=18
 ```
 Set `frontend/.env` for API URLs if they differ from defaults:
 ```
 VITE_API_URL=http://localhost:8000
-VITE_BOT_API_URL=http://localhost:5000
+# Optional: override chatbot base URL (defaults to VITE_API_URL)
+# VITE_BOT_API_URL=http://localhost:8000
 ```
 
 ### 3. Run Services
 ```bash
 # FastAPI API
 uvicorn backend.main:app --reload --port 8000
-
-# Chatbot server
-python backend/bot.py  # listens on port 5000
-
 # React frontend
 cd frontend && npm run dev
 ```
@@ -63,13 +60,12 @@ cd frontend && npm run dev
 | `POST /api/answers` | Save or update a single answer. |
 | `POST /api/recommendations` | Run Gemini to generate a structured plan. |
 | `POST /api/guided-session` | Launch `MLH.py` for the selected exercise. |
-| `POST /ask-majka` (Flask) | Chatbot conversation endpoint. |
+| `POST /ask-majka` | Chatbot conversation endpoint (Gemini). |
 
 ## Project Structure
 ```
 backend/
   main.py          # FastAPI app
-  bot.py           # Chatbot Flask app
   MLH.py           # Guided exercise tracker
   requirements.txt
 frontend/

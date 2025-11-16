@@ -3,7 +3,7 @@ import "./App.css";
 import MajkaLogo from "./assets/Majka.png";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
-const BOT_API_BASE = import.meta.env.VITE_BOT_API_URL || "http://localhost:5000";
+const BOT_API_BASE = import.meta.env.VITE_BOT_API_URL || API_BASE;
 
 const INITIAL_SIGNUP = {
   name: "",
