@@ -1,10 +1,10 @@
 import os
 from dotenv import load_dotenv # <-- CRITICAL FIX: Loads .env variables
 from flask import Flask, request, jsonify, Response
-from flask_cors import CORS
+from flask_cors import CORSx
 import google.generativeai as genai
-from elevenlabs import Voice 
-from elevenlabs.client import ElevenLabs 
+# from elevenlabs import Voice 
+# from elevenlabs.client import ElevenLabs 
 
 # --- LOAD ENVIRONMENT VARIABLES ---
 load_dotenv(".env.local")
@@ -19,7 +19,6 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
 # Initialize Clients
 genai.configure(api_key=GOOGLE_API_KEY)
-el_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
 
 # Define Voice ID
@@ -67,38 +66,6 @@ def ask_majka():
     except Exception as e:
         print(f"Gemini Error: {e}")
         return jsonify({"error": "Failed to get response from AI"}), 500
-
-
-# --- 4. API ENDPOINT: VOICE GENERATION (ElevenLabs) ---
-@app.route('/speak', methods=['POST'])
-# --- 4. API ENDPOINT: VOICE GENERATION (ElevenLabs) ---
-@app.route('/speak', methods=['POST'])
-# --- 4. API ENDPOINT: VOICE GENERATION (ElevenLabs) ---
-@app.route('/speak', methods=['POST'])
-def speak_text():
-    """Endpoint to generate and stream audio from text using ElevenLabs."""
-    text_to_speak = request.json.get('text')
-
-    if not text_to_speak:
-        return jsonify({"error": "No text provided"}), 400
-
-    try:
-        # CRITICAL FIX: The 'stream=True' argument is removed.
-        # The library returns a streamable iterator by default, which Flask can handle.
-        audio_stream = el_client.text_to_speech.convert(
-            text=text_to_speak,
-            voice_id=MATERNAL_VOICE_ID,
-            model_id="eleven_turbo_v2",
-        )
-        
-        # Return the audio stream as an audio/mpeg (MP3) file
-        # This will now use the correct streamable object returned by the library.
-        return Response(audio_stream, mimetype="audio/mpeg")
-
-    except Exception as e:
-        print(f"ElevenLabs TTS Error: {e}")
-        return jsonify({"error": "Failed to generate speech"}), 500
-
 
 # --- 5. RUN SERVER ---
 if __name__ == '__main__':
