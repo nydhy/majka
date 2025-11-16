@@ -6,7 +6,14 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100vh;
-  background: radial-gradient(circle at top, #ffd6f3 0, #ffb6e6 30%, #ff9ad9 60%, #ff7ac0 100%);
+  background: linear-gradient(
+    180deg,
+    #ffe5b4 0%,
+    #ffd1c8 25%,
+    #ffcdcd 50%,
+    #ffc8d1 75%,
+    #ffb4e5 100%
+  );
   display: flex;
   justify-content: center;
   align-items: center;
@@ -58,13 +65,19 @@ body {
 }
 
 .hamburger-btn {
-  background: transparent;
+  background: #fff4fb;
   border: none;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
   display: flex;
   flex-direction: column;
+  justify-content: center;
+  align-items: center;
   gap: 4px;
-  padding: 6px;
+  padding: 0;
   cursor: pointer;
+  box-shadow: 0 10px 25px rgba(90, 10, 69, 0.25);
 }
 
 .hamburger-btn span {
@@ -73,6 +86,7 @@ body {
   height: 2px;
   background: #5a1045;
   border-radius: 999px;
+  transition: transform 0.2s ease;
 }
 
 .menu-dropdown {
@@ -848,8 +862,8 @@ body {
 }
 .floating-menu {
   position: fixed;
-  top: 20px;
-  left: 20px;
+  top: 24px;
+  left: 24px;
   z-index: 60;
 }
 
