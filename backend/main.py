@@ -16,6 +16,10 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 from postgrest.exceptions import APIError
 from datetime import datetime, timezone, timedelta
+from fastapi.responses import StreamingResponse
+from elevenlabs.client import ElevenLabs # FIX: Import the client class
+from typing import Any
+import asyncio
 
 class MotherPayload(BaseModel):
     name: str
@@ -61,6 +65,9 @@ SUPABASE_ANSWERS_TABLE = os.getenv("SUPABASE_ANSWERS_TABLE", "answers")
 SUPABASE_OPTIONS_TABLE = os.getenv("SUPABASE_OPTIONS_TABLE", "question_options")
 MAX_QUESTION_ORDER = int(os.getenv("MAX_QUESTION_ORDER", "18"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY") 
+VOICE_ID = "a1m16HA3i1rljUsxpKfn"
+TTS_MODEL = "eleven_multilingual_v2"
 
 EXERCISES = [
     {"key": "breathing", "label": "Breathing"},
@@ -717,44 +724,43 @@ def start_guided_session(payload: GuidedSessionPayload):
         "exercise": exercise_key,
     }
 
+async def _get_majka_response(mother_id: int, question: str) -> tuple[str, dict]:
+    if not question:
+        return "Please provide a question for Majka.", {}
+    
+    if not GEMINI_API_KEY:
+        if GEMINI_API_KEY is None:
+            raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured.")
+        return "I am currently unable to access my knowledge base. Please try again.", {}
+
+    try:
+        full_context_string, user_data = _build_chat_context(mother_id)
+        full_prompt = full_context_string + "\n\nUser's Current Question: " + question
+
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: chat_model.generate_content(full_prompt)
+        )
+        
+        ai_answer = (response.text or "I'm here for you, mama.").strip()
+        return ai_answer, user_data
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"Gemini Error for mother {mother_id}: {exc}")
+        return "I encountered an error trying to process that request.", {}
+
+
 @app.post("/ask-majka")
-def ask_majka(payload: ChatPayload):
-    """
-    Endpoint to get a safe, contextual text response from Gemini (LLM).
-    
-    Fetches all intake data, summarizes it, and injects it into the prompt.
-    """
-    
+async def ask_majka(payload: ChatPayload):
     if not payload.question:
         raise HTTPException(status_code=400, detail="Please provide a question for Majka.")
     
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured.")
-
-    try:
-        # 1. Retrieve and Build Full Context (Profile + QA Answers)
-        full_context_string, user_data = _build_chat_context(payload.mother_id)
-        
-        # 2. Construct Final Prompt
-        full_prompt = full_context_string + "\n\nUser's Current Question: " + payload.question
-
-        # 3. Call the Gemini model for the text response
-        response = chat_model.generate_content(full_prompt)
-        ai_answer = (response.text or "I'm here for you, mama.").strip()
-
-        # 4. Send the answer and basic user data back
-        return {"answer": ai_answer, "user_data": user_data}
-
-    except HTTPException:
-        # Re-raise explicit HTTP exceptions (e.g., 400, 404, 500 DB errors)
-        raise
-    except Exception as exc:
-        # Catch unexpected errors (e.g., Gemini service failure)
-        print(f"Gemini Error for mother {payload.mother_id}: {exc}")
-        raise HTTPException(
-            status_code=500, 
-            detail="Failed to get response from AI"
-        )
+    ai_answer, user_data = await _get_majka_response(payload.mother_id, payload.question)
+    
+    return {"answer": ai_answer, "user_data": user_data}
 
 def get_user_data_and_age(mother_id: int):
     """
@@ -918,6 +924,36 @@ def _build_chat_context(mother_id: int) -> tuple[str, dict]:
     }
 
     return context_prefix + context_intake, user_data
+# --- NEW VOICE ENDPOINT (HTTP Streaming) ---
+
+@app.post("/ask-majka-voice")
+async def ask_majka_voice(payload: ChatPayload):
+    if not ELEVENLABS_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Voice service is unavailable. ElevenLabs API key is missing."
+        )
+
+    ai_answer, _ = await _get_majka_response(payload.mother_id, payload.question)
+
+    def audio_stream_generator():
+        try:
+            audio_stream = generate(
+                text=ai_answer,
+                voice=VOICE_ID,
+                model=TTS_MODEL,
+                stream=True
+            )
+            for chunk in audio_stream:
+                yield chunk
+        except Exception as e:
+            print(f"ElevenLabs streaming error: {e}")
+
+    return StreamingResponse(
+        audio_stream_generator(),
+        media_type="audio/mpeg", 
+        headers={"Content-Disposition": "attachment; filename=majka_response.mp3"}
+    )
 
 @app.get("/api/mothers/{mother_id}/profile")
 def get_mother_profile_detail(mother_id: int):
