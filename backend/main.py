@@ -280,7 +280,7 @@ Based on the directives above, create the JSON response.
 * *{postpartum_text}*: [Context describing weeks postpartum and delivery type]
 * *{qa_section}*: [Specific answers regarding pain, core issues, and red flags]
 * *{exercise_section}*: [The full library of approved exercises and their descriptions]
-* *name_for_prompt*: [The user's first name]
+* *{name_for_prompt}*: [The user's first name]
 
 Respond with valid JSON in this shape, using the *casual, human tone* in all text fields:
 {{
