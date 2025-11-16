@@ -45,6 +45,8 @@ class GuidedSessionPayload(BaseModel):
 
 class ChatPayload(BaseModel):
     question: str
+    mother_id: int | None = None
+    mother_name: str | None = None
 
 load_dotenv()
 
@@ -674,8 +676,10 @@ def ask_majka(payload: ChatPayload):
     message = (payload.question or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Please provide a question for Majka.")
+    mother_name = (payload.mother_name or "mama").strip()
+    prefixed_question = f"{mother_name} asks: {message}"
     try:
-        response = chat_model.generate_content(message)
+        response = chat_model.generate_content(prefixed_question)
         answer = (response.text or "I'm here for you, mama.").strip()
     except Exception as exc:  # pragma: no cover - external API
         raise HTTPException(status_code=500, detail=f"Majka chat error: {exc}") from exc
